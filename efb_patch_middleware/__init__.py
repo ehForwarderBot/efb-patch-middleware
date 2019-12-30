@@ -45,6 +45,8 @@ from efb_wechat_slave.vendor.wxpy.utils import start_new_thread
 from peewee import Model, TextField, SqliteDatabase, DoesNotExist, fn, BlobField, \
     OperationalError
 
+from .__version__ import __version__ as version
+
 database = SqliteDatabase(None)
 
 OldMsgID = Tuple[TelegramChatID, TelegramMessageID]
@@ -170,7 +172,7 @@ class PatchMiddleware(EFBMiddleware):
 
     middleware_id = "patch.PatchMiddleware"
     middleware_name = "Patch Middleware"
-    __version__: str = '1.0.0'
+    __version__: str = version
 
     logger: logging.Logger = logging.getLogger("plugins.%s" % middleware_id)
 
