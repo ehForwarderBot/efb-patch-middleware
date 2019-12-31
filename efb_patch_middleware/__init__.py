@@ -40,6 +40,7 @@ from efb_wechat_slave.vendor import wxpy
 from efb_wechat_slave.slave_message import SlaveMessageManager
 from efb_wechat_slave.vendor.wxpy import ResponseError
 from efb_wechat_slave.vendor.wxpy.api.consts import SYSTEM
+from efb_wechat_slave.vendor.wxpy.api.bot import Bot as WXPYBOT
 from efb_wechat_slave.vendor.wxpy.utils import start_new_thread
 
 from peewee import Model, TextField, SqliteDatabase, DoesNotExist, fn, BlobField, \
@@ -293,6 +294,7 @@ class PatchMiddleware(EFBMiddleware):
         self.auto_mark_as_read = self.channel_ews.bot.auto_mark_as_read
         self.mark_as_read_cache: ChatDestinationCache = ChatDestinationCache('enabled')
         self.channel_ews.bot._process_message = self._process_message
+        WXPYBOT._process_message = self._process_message
         # self.logger.log(99, "set auto_mark_as_read to [%s]", self.channel_ews.bot.auto_mark_as_read)
 
     def ews_init_patch(self):
