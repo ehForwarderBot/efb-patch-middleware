@@ -1,3 +1,6 @@
+Patches to enhance EFB functionality
+==========================
+[![PyPI release](https://img.shields.io/pypi/v/efb-patch-middleware.svg)](https://pypi.org/project/efb-patch-middleware/)
 
 ### Main Function
 
@@ -20,9 +23,9 @@ EWS 2.0.0a32
 
 ### Usage
 
-The `/update_info` command will bind the current group to the WeChat chat one-to-one correspondence
-The `/relate_group` command binds the WeChat group to the current telegram group, and can be associated with multiple WeChat chats; repeated use will clear the previous binding relationship
-The `/release_group` command will delete all WeChat sessions bound to the telegram group
+The `/update_info` command will bind the current group to the WeChat chat one-to-one correspondence  
+The `/relate_group` command binds the WeChat group to the current telegram group, and can be associated with multiple WeChat chats; repeated use will clear the previous binding relationship  
+The `/release_group` command will delete all WeChat sessions bound to the telegram group  
 
 Add the following configuration under `blueset.telegram/config.yaml`, and send the public account message to the `-12334557` group (view the id through the `/info` command)
 
