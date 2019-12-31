@@ -301,6 +301,7 @@ class PatchMiddleware(EFBMiddleware):
     def ews_slave_message_patch(self):
         config = self.registered.get_config_by_func(self.channel_ews.slave_message.wechat_sharing_msg)
         config.func = self.wechat_sharing_msg
+        self.channel_ews.slave_message.wechat_sharing_msg = self.wechat_sharing_msg
 
     def sent_by_master(self, message: EFBMsg) -> bool:
         author = message.author
