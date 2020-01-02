@@ -9,13 +9,15 @@ import logging
 import telegram
 
 from PIL import Image
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 from xml.etree import ElementTree as ETree
 from xml.etree.ElementTree import Element
 
-from typing import Tuple, Optional, List, overload, Callable, Sequence, Any, Dict
-from telegram import Update, Message, Chat, TelegramError
+from typing import Tuple, Optional, List, overload, Callable, Sequence, Any, Dict, IO
+from telegram import Update, Message, Chat, TelegramError, InputMediaPhoto, InputMediaDocument, InputMediaVideo
 from telegram.ext import CallbackContext, Filters, MessageHandler, CommandHandler
+from telegram.error import BadRequest
 from telegram.utils.helpers import escape_markdown
 
 from ehforwarderbot import EFBMiddleware, EFBMsg, EFBStatus, \
@@ -210,6 +212,7 @@ class PatchMiddleware(EFBMiddleware):
 
             self._send_cached_chat_warning = self.master_messages._send_cached_chat_warning
             self._check_file_download = self.master_messages._check_file_download
+            self.attach_target_message = self.master_messages.attach_target_message
             self.TYPE_DICT = self.master_messages.TYPE_DICT
 
             self.etm_master_messages_patch()
@@ -233,6 +236,7 @@ class PatchMiddleware(EFBMiddleware):
             self.wechat_shared_link_msg = self.channel_ews.slave_message.wechat_shared_link_msg
             self.wechat_raw_link_msg = self.channel_ews.slave_message.wechat_raw_link_msg
             self.wechat_text_msg = self.channel_ews.slave_message.wechat_text_msg
+            self.get_node_text = self.channel_ews.slave_message.get_node_text
             self.UNSUPPORTED_MSG_PROMPT = self.channel_ews.slave_message.UNSUPPORTED_MSG_PROMPT
 
             self.ews_set_mark_as_read()
@@ -324,20 +328,20 @@ class PatchMiddleware(EFBMiddleware):
         return message
 
     # efb_telegram_master/slave_message.py
-    def generate_message_template(self, msg: EFBMsg, tg_chat, multi_slaves: bool) -> str:
+    def generate_message_template(self, msg: EFBMsg, singly_linked: bool) -> str:
         msg_prefix = ""  # For group member name
         if msg.chat.chat_type == ChatType.Group:
             self.logger.debug("[%s] Message is from a group. Sender: %s", msg.uid, msg.author)
             ### patch modified 👇 ###
             msg_prefix = self.get_display_name(msg.author)
 
-        if tg_chat and not multi_slaves:  # if singly linked
+        if singly_linked:
             if msg_prefix:  # if group message
                 msg_template = f"{msg_prefix}:"
             else:
                 if msg.chat != msg.author:
                     ### patch modified 👇 ###
-                    msg_template = "%s:" % self.get_display_name(msg.author)
+                    msg_template = f"{self.get_display_name(msg.author)}:"
                 else:
                     msg_template = ""
         elif msg.chat.chat_type == ChatType.User:
@@ -346,7 +350,7 @@ class PatchMiddleware(EFBMiddleware):
             name_prefix = self.get_display_name(msg.chat)
             if msg.chat != msg.author:
                 ### patch modified 👇 ###
-                name_prefix += ", %s" % self.get_display_name(msg.author)
+                name_prefix += f", {self.get_display_name(msg.author)}"
             msg_template = f"{emoji_prefix} {name_prefix}:"
         elif msg.chat.chat_type == ChatType.Group:
             emoji_prefix = msg.chat.channel_emoji + Emoji.get_source_emoji(msg.chat.chat_type)
@@ -360,9 +364,9 @@ class PatchMiddleware(EFBMiddleware):
             msg_template = f"{emoji_prefix} {name_prefix}:"
         else:
             if msg.chat == msg.author:
-                msg_template = f"\u2753 {msg.chat.long_name}:"
+                msg_template = f"{Emoji.UNKNOWN} {msg.chat.long_name}:"
             else:
-                msg_template = f"\u2753 {msg.author.long_name} ({msg.chat.display_name}):"
+                msg_template = f"{Emoji.UNKNOWN} {msg.author.long_name} ({msg.chat.display_name}):"
         return msg_template
 
     def get_display_name(self, chat: ETMChat) -> str:
@@ -377,18 +381,21 @@ class PatchMiddleware(EFBMiddleware):
                             silent: bool = False) -> telegram.Message:
         self.bot.send_chat_action(tg_dest, telegram.ChatAction.UPLOAD_VIDEO)
         ### patch modified start 👇 ###
-        # if not msg.text:
-        #     msg.text = self._("sent a video.")
+        if msg.text:
+            text = self.html_substitutions(msg)
+        else:
+            text = "🎥"
         ### patch modified end 👆 ###
         try:
             if old_msg_id:
                 if msg.edit_media:
                     assert msg.file is not None
-                    self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=msg.file)
-                return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1],
-                                                     prefix=msg_template, suffix=reactions, caption=msg.text)
+                    self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=InputMediaVideo(msg.file))
+                return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1], reply_markup=reply_markup,
+                                                     prefix=msg_template, suffix=reactions, caption=text, parse_mode="HTML")
             assert msg.file is not None
-            return self.bot.send_video(tg_dest, msg.file, prefix=msg_template, suffix=reactions, caption=msg.text,
+            return self.bot.send_video(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
+                                       caption=text, parse_mode="HTML",
                                        reply_to_message_id=target_msg_id,
                                        reply_markup=reply_markup,
                                        disable_notification=silent)
@@ -414,21 +421,28 @@ class PatchMiddleware(EFBMiddleware):
         # Replace it with a space
         # Note: it also seems to strip off a lot of unicode punctuations
         file_name = file_name.replace(';', ' ')
-        ### patch modified 👇 ###
-        # msg.text = msg.text or self._("sent a file.")
+
+        ### patch modified start 👇 ###
+        if msg.text:
+            text = self.html_substitutions(msg)
+        else:
+            text = "📄"
+        ### patch modified end 👆 ###
+
         try:
             if old_msg_id:
                 if msg.edit_media:
                     assert msg.file is not None
-                    self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=msg.file)
-                return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1],
-                                                     prefix=msg_template, suffix=reactions, caption=msg.text)
+                    self.bot.edit_message_media(
+                        chat_id=old_msg_id[0], message_id=old_msg_id[1], media=InputMediaDocument(msg.file))
+                return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1], reply_markup=reply_markup,
+                                                     prefix=msg_template, suffix=reactions, caption=text, parse_mode="HTML")
             assert msg.file is not None
             self.logger.debug("[%s] Uploading file %s (%s) as %s", msg.uid,
                               msg.file.name, msg.mime, file_name)
             return self.bot.send_document(tg_dest, msg.file,
                                           prefix=msg_template, suffix=reactions,
-                                          caption=msg.text, filename=file_name,
+                                          caption=text, parse_mode="HTML", filename=file_name,
                                           reply_to_message_id=target_msg_id,
                                           reply_markup=reply_markup,
                                           disable_notification=silent)
@@ -442,76 +456,92 @@ class PatchMiddleware(EFBMiddleware):
                             target_msg_id: Optional[TelegramMessageID] = None,
                             reply_markup: Optional[telegram.ReplyMarkup] = None,
                             silent: bool = False) -> telegram.Message:
+        assert msg.file
         self.bot.send_chat_action(tg_dest, telegram.ChatAction.UPLOAD_PHOTO)
-        self.logger.debug("[%s] Message is of %s type; Path: %s; MIME: %s", msg.uid, msg.type, msg.path, msg.mime)
+        self.logger.debug("[%s] Message is of %s type; Path: %s; MIME: %s",
+                          msg.uid, msg.type, msg.path, msg.mime)
         if msg.path:
-            self.logger.debug("[%s] Size of %s is %s.", msg.uid, msg.path, os.stat(msg.path).st_size)
+            self.logger.debug("[%s] Size of %s is %s.",
+                              msg.uid, msg.path, os.stat(msg.path).st_size)
 
         ### patch modified start 👇 ###
-        # if not msg.text:
-        #     msg.text = self._("sent a picture.")
+        if msg.text:
+            text = self.html_substitutions(msg)
+        else:
+            text = "🖼️"
         ### patch modified end 👆 ###
         try:
-            if old_msg_id:
-                if msg.edit_media:
-                    self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=msg.file)
-                return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1],
-                                                     prefix=msg_template, suffix=reactions, caption=msg.text)
-            else:
+            # Avoid Telegram compression of pictures by sending high definition image messages as files
+            # Code adopted from wolfsilver's fork:
+            # https://github.com/wolfsilver/efb-telegram-master/blob/99668b60f7ff7b6363dfc87751a18281d9a74a09/efb_telegram_master/slave_message.py#L142-L163
+            #
+            # Rules:
+            # 1. If the picture is too large -- shorter side is greater than IMG_MIN_SIZE, send as file.
+            # 2. If the picture is large and thin --
+            #        longer side is greater than IMG_MAX_SIZE, and
+            #        aspect ratio (longer to shorter side ratio) is greater than IMG_SIZE_RATIO,
+            #    send as file.
+            # 3. If the picture is too thin -- aspect ratio grater than IMG_SIZE_MAX_RATIO, send as file.
 
-                # Avoid Telegram compression of pictures by sending high definition image messages as files
-                # Code adopted from wolfsilver's fork:
-                # https://github.com/wolfsilver/efb-telegram-master/blob/99668b60f7ff7b6363dfc87751a18281d9a74a09/efb_telegram_master/slave_message.py#L142-L163
-                #
-                # Rules:
-                # 1. If the picture is too large -- shorter side is greater than IMG_MIN_SIZE, send as file.
-                # 2. If the picture is large and thin --
-                #        longer side is greater than IMG_MAX_SIZE, and
-                #        aspect ratio (longer to shorter side ratio) is greater than IMG_SIZE_RATIO,
-                #    send as file.
-                # 3. If the picture is too thin -- aspect ratio grater than IMG_SIZE_MAX_RATIO, send as file.
+            try:
+                pic_img = Image.open(msg.path)
+                max_size = max(pic_img.size)
+                min_size = min(pic_img.size)
+                img_ratio = max_size / min_size
 
-                try:
-                    pic_img = Image.open(msg.path)
-                    max_size = max(pic_img.size)
-                    min_size = min(pic_img.size)
-                    img_ratio = max_size / min_size
-
-                    if min_size > self.IMG_MIN_SIZE:
-                        send_as_file = True
-                    elif max_size > self.IMG_MAX_SIZE and img_ratio > self.IMG_SIZE_RATIO:
-                        send_as_file = True
-                    elif img_ratio >= self.IMG_SIZE_MAX_RATIO:
-                        send_as_file = True
-                    else:
-                        send_as_file = False
-                ### patch modified 👇 ###
-                # https://github.com/mpetroff/pannellum/issues/596
-                # PIL.Image.DecompressionBombError: Image size (205461516 pixels) exceeds limit of 178956970 pixels, could be decompression bomb DOS attack.
-                except Exception:  # Ignore when the image cannot be properly identified.
+                if min_size > self.IMG_MIN_SIZE:
+                    send_as_file = True
+                elif max_size > self.IMG_MAX_SIZE and img_ratio > self.IMG_SIZE_RATIO:
+                    send_as_file = True
+                elif img_ratio >= self.IMG_SIZE_MAX_RATIO:
+                    send_as_file = True
+                else:
                     send_as_file = False
+            ### patch modified 👇 ###
+            # https://github.com/mpetroff/pannellum/issues/596
+            # PIL.Image.DecompressionBombError: Image size (205461516 pixels) exceeds limit of 178956970 pixels, could be decompression bomb DOS attack.
+            except Exception:  # Ignore when the image cannot be properly identified.
+                send_as_file = False
 
-                if send_as_file:
+            if old_msg_id:
+                try:
+                    if msg.edit_media:
+                        if send_as_file:
+                            media = InputMediaDocument(msg.file)
+                        else:
+                            media = InputMediaPhoto(msg.file)
+                        self.bot.edit_message_media(
+                            chat_id=old_msg_id[0], message_id=old_msg_id[1], media=media)
+                    return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1],
+                                                         reply_markup=reply_markup,
+                                                         prefix=msg_template, suffix=reactions, caption=text, parse_mode="HTML")
+                except telegram.error.BadRequest:
+                    # Send as an reply if cannot edit previous message.
+                    if old_msg_id[0] == str(target_msg_id):
+                        target_msg_id = target_msg_id or old_msg_id[1]
+                    msg.file.seek(0)
+
+            if send_as_file:
+                return self.bot.send_document(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
+                                              caption=text, parse_mode="HTML", filename=msg.filename,
+                                              reply_to_message_id=target_msg_id,
+                                              reply_markup=reply_markup,
+                                              disable_notification=silent)
+            else:
+                try:
+                    return self.bot.send_photo(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
+                                               caption=text, parse_mode="HTML",
+                                               reply_to_message_id=target_msg_id,
+                                               reply_markup=reply_markup,
+                                               disable_notification=silent)
+                except telegram.error.BadRequest as e:
+                    self.logger.error('[%s] Failed to send it as image, sending as document. Reason: %s',
+                                      msg.uid, e)
                     return self.bot.send_document(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
-                                                  caption=msg.text, filename=msg.filename,
+                                                  caption=text, parse_mode="HTML", filename=msg.filename,
                                                   reply_to_message_id=target_msg_id,
                                                   reply_markup=reply_markup,
                                                   disable_notification=silent)
-                else:
-                    try:
-                        return self.bot.send_photo(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
-                                                   caption=msg.text,
-                                                   reply_to_message_id=target_msg_id,
-                                                   reply_markup=reply_markup,
-                                                   disable_notification=silent)
-                    except telegram.error.BadRequest as e:
-                        self.logger.error('[%s] Failed to send it as image, sending as document. Reason: %s',
-                                          msg.uid, e)
-                        return self.bot.send_document(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
-                                                      caption=msg.text, filename=msg.filename,
-                                                      reply_to_message_id=target_msg_id,
-                                                      reply_markup=reply_markup,
-                                                      disable_notification=silent)
         finally:
             if msg.file:
                 msg.file.close()
@@ -533,7 +563,8 @@ class PatchMiddleware(EFBMiddleware):
 
         if tg_chats:
             tg_chat = tg_chats[0]
-        self.logger.debug("[%s] The message should deliver to %s", xid, tg_chat)
+        self.logger.debug(
+            "[%s] The message should deliver to %s", xid, tg_chat)
 
         ### patch modified start 👇 ###
         # 如果没有绑定，判断同名的tg群组，自动尝试关联
@@ -547,8 +578,10 @@ class PatchMiddleware(EFBMiddleware):
             if tg_group is not None:
                 auto_detect_tg_dest = tg_group.master_id
                 multi_slaves = bool(tg_group.multi_slaves)
-                tg_chat = utils.chat_id_to_str(self.channel.channel_id, auto_detect_tg_dest)
-                t_chat.link(self.channel.channel_id, auto_detect_tg_dest, multi_slaves)
+                tg_chat = utils.chat_id_to_str(
+                    self.channel.channel_id, auto_detect_tg_dest)
+                t_chat.link(self.channel.channel_id,
+                            auto_detect_tg_dest, multi_slaves)
 
             elif t_chat.vendor_specific.get('is_mp', False) and tg_mp:
                 tg_chat = utils.chat_id_to_str(self.channel.channel_id, tg_mp)
@@ -561,24 +594,28 @@ class PatchMiddleware(EFBMiddleware):
                 result = self.mod_tit_pattern.findall(msg.text)
                 if len(result) > 0:
                     new_tit = result[0]
-                    self.tgdb.update_tg_groups(int(utils.chat_id_str_to_id(tg_chat)[1]), new_tit)
+                    self.tgdb.update_tg_groups(
+                        int(utils.chat_id_str_to_id(tg_chat)[1]), new_tit)
         ### patch modified end 👆 ###
 
-        multi_slaves = False
+        singly_linked = True
         if tg_chat:
             slaves = self.db.get_chat_assoc(master_uid=tg_chat)
             if slaves and len(slaves) > 1:
-                multi_slaves = True
-                self.logger.debug("[%s] Sender is linked with other chats in a Telegram group.", xid)
+                singly_linked = False
+                self.logger.debug(
+                    "[%s] Sender is linked with other chats in a Telegram group.", xid)
         self.logger.debug("[%s] Message is in chat %s", xid, msg.chat)
 
         # Generate chat text template & Decide type target
         tg_dest = self.channel.config['admins'][0]
 
         if tg_chat:  # if this chat is linked
-            tg_dest = int(utils.chat_id_str_to_id(tg_chat)[1])
+            tg_dest = TelegramChatID(utils.chat_id_str_to_id(tg_chat)[1])
+        else:
+            singly_linked = False
 
-        msg_template = self.generate_message_template(msg, tg_chat, multi_slaves)
+        msg_template = self.generate_message_template(msg, singly_linked)
         self.logger.debug("[%s] Message is sent to Telegram chat %s, with header \"%s\".",
                           xid, tg_dest, msg_template)
 
@@ -615,35 +652,46 @@ class PatchMiddleware(EFBMiddleware):
         pic_resized: Optional[IO] = None
         channel_id, chat_uid, _ = utils.chat_id_str_to_id(chats[0])
         if channel_id not in coordinator.slaves:
-            self.logger.exception(f"Channel linked ({channel_id}) is not found.")
+            self.logger.exception(
+                f"Channel linked ({channel_id}) is not found.")
             return self.bot.reply_error(update, self._('Channel linked ({channel}) is not found.')
                                         .format(channel=channel_id))
         channel = coordinator.slaves[channel_id]
         try:
-            chat = self.chat_manager.update_chat_obj(channel.get_chat(chat_uid), full_update=True)
+            chat = self.chat_manager.update_chat_obj(
+                channel.get_chat(chat_uid), full_update=True)
             ### patch modified start 👇 ###
-            chat_title=f"{chat.chat_alias or chat.chat_name}"
+            chat_title = f"{chat.chat_alias or chat.chat_name}"
             self.tgdb.add_tg_groups(master_id=tg_chat, master_name=chat_title)
-            self.bot.set_chat_title(tg_chat, self.truncate_ellipsis(chat_title, self.MAX_LEN_CHAT_TITLE))
+            self.bot.set_chat_title(tg_chat, self.truncate_ellipsis(
+                chat_title, self.MAX_LEN_CHAT_TITLE))
             ### patch modified end 👆 ###
 
             # Update remote group members list to Telegram group description if available
-            # TODO: Add chat bio too when it’s available in the framework
+            desc = chat.description
             if chat.members:
                 # TRANSLATORS: Separator between group members in a Telegram group description generated by /update_info
-                desc = self._(", ").join(i.long_name for i in chat.members)
-                desc = self.ngettext("{count} group member: {list}",
-                                     "{count} group members: {list}",
-                                     len(chat.members)).format(
-                    count=len(chat.members), list=desc
+                members = self._(", ").join(i.long_name for i in chat.members)
+                if desc:
+                    desc += "\n"
+                desc += self.ngettext("{count} group member: {list}",
+                                      "{count} group members: {list}",
+                                      len(chat.members)).format(
+                    count=len(chat.members), list=members
                 )
+            if desc:
                 try:
                     self.bot.set_chat_description(
                         tg_chat, self.truncate_ellipsis(desc, self.MAX_LEN_CHAT_DESC))
+                except BadRequest as e:
+                    if "Chat description is not modified" in e.message:
+                        pass
+                    else:
+                        self.logger.exception(
+                            "Exception occurred while trying to update chat description: %s", e)
                 except TelegramError as e:  # description is not updated
-                    ### patch modified 👇 ###
-                    # self.logger.exception("Exception occurred while trying to update chat description: %s", e)
-                    pass
+                    self.logger.exception(
+                        "Exception occurred while trying to update chat description: %s", e)
 
             picture = channel.get_chat_picture(chat)
             if not picture:
@@ -653,7 +701,8 @@ class PatchMiddleware(EFBMiddleware):
             if pic_img.size[0] < self.TELEGRAM_MIN_PROFILE_PICTURE_SIZE or \
                     pic_img.size[1] < self.TELEGRAM_MIN_PROFILE_PICTURE_SIZE:
                 # resize
-                scale = self.TELEGRAM_MIN_PROFILE_PICTURE_SIZE / min(pic_img.size)
+                scale = self.TELEGRAM_MIN_PROFILE_PICTURE_SIZE / \
+                    min(pic_img.size)
                 pic_resized = io.BytesIO()
                 pic_img.resize(tuple(map(lambda a: int(scale * a), pic_img.size)), Image.BICUBIC) \
                     .save(pic_resized, 'PNG')
@@ -781,28 +830,19 @@ class PatchMiddleware(EFBMiddleware):
 
     # efb_telegram_master/master_message.py
     def process_telegram_message(self, update: Update, context: CallbackContext,
-                                 channel_id: Optional[ModuleID] = None,
-                                 chat_id: Optional[ChatID] = None,
-                                 target_msg: Optional[utils.TgChatMsgIDStr] = None):
+                                 destination: EFBChannelChatIDStr, quote: bool = False):
         """
         Process messages came from Telegram.
 
         Args:
             update: Telegram message update
             context: PTB update context
-            channel_id: Slave channel ID if specified
-            chat_id: Slave chat ID if specified
-            target_msg: Target slave message if specified
+            destination: Destination of the message specified.
+            quote: If the message shall quote another one
         """
-        target: Optional[EFBChannelChatIDStr] = None
-        target_channel: Optional[ModuleID] = None
-        target_log: Optional['MsgLog'] = None
+
         # Message ID for logging
         message_id = utils.message_id_to_str(update=update)
-
-        multi_slaves: bool = False
-        destination: Optional[EFBChannelChatIDStr] = None
-        slave_msg: Optional[EFBMsg] = None
 
         message: telegram.Message = update.effective_message
 
@@ -810,105 +850,10 @@ class PatchMiddleware(EFBMiddleware):
         self.logger.debug('[%s] Message is edited: %s, %s',
                           message_id, edited, message.edit_date)
 
-        private_chat = update.effective_chat.type == telegram.Chat.PRIVATE
-
-        if not private_chat:  # from group
-            linked_chats = self.db.get_chat_assoc(master_uid=utils.chat_id_to_str(
-                self.channel_id, update.effective_chat.id))
-            if len(linked_chats) == 1:
-                destination = linked_chats[0]
-            elif len(linked_chats) > 1:
-                multi_slaves = True
-
-        reply_to = bool(getattr(message, "reply_to_message", None))
-
-        # Process predefined target (slave) chat.
-        cached_dest = self.chat_dest_cache.get(message.chat.id)
-        if channel_id and chat_id:
-            destination = utils.chat_id_to_str(channel_id, chat_id)
-            # TODO: what is going on here?
-            if target_msg is not None:
-                target_log = self.db.get_msg_log(master_msg_id=target_msg)
-                if target_log:
-                    target = target_log.slave_origin_uid
-                    if target is not None:
-                        target_channel, target_uid, _ = utils.chat_id_str_to_id(target)
-                else:
-                    return self.bot.reply_error(update,
-                                                self._("Message is not found in ETM database. "
-                                                       "Please try with another message. (UC07)"))
-        elif private_chat:
-            if reply_to:
-                dest_msg = self.db.get_msg_log(master_msg_id=utils.message_id_to_str(
-                    message.reply_to_message.chat.id,
-                    message.reply_to_message.message_id))
-                if dest_msg:
-                    destination = dest_msg.slave_origin_uid
-                    self.chat_dest_cache.set(message.chat.id, dest_msg.slave_origin_uid)
-                else:
-                    return self.bot.reply_error(update,
-                                                self._("Message is not found in ETM database. "
-                                                       "Please try with another one. (UC03)"))
-            elif cached_dest:
-                destination = cached_dest
-                self._send_cached_chat_warning(update, message.chat.id, cached_dest)
-            else:
-                return self.bot.reply_error(update,
-                                            self._("Please reply to an incoming message. (UC04)"))
-        else:  # group chat
-            ### patch modified start 👇 ###
-            # if reply_to:
-            #     # 回复其他人，不处理
-            #     if message.reply_to_message.from_user.id != self.bot.me.id:
-            #         self.logger.debug("Message is not reply to the bot: %s", message.to_dict())
-            #         return
-            ### patch modified end 👆 ###
-            if multi_slaves:
-                if reply_to:
-                    dest_msg = self.db.get_msg_log(master_msg_id=utils.message_id_to_str(
-                        message.reply_to_message.chat.id,
-                        message.reply_to_message.message_id))
-                    if dest_msg:
-                        destination = dest_msg.slave_origin_uid
-                        assert destination is not None
-                        self.chat_dest_cache.set(message.chat.id, destination)
-                    else:
-                        return self.bot.reply_error(update,
-                                                    self._("Message is not found in ETM database. "
-                                                           "Please try with another one. (UC05)"))
-                elif cached_dest:
-                    destination = cached_dest
-                    self._send_cached_chat_warning(update, message.chat.id, cached_dest)
-                else:
-                    return self.bot.reply_error(update,
-                                                self._("This group is linked to multiple remote chats. "
-                                                       "Please reply to an incoming message. "
-                                                       "To unlink all remote chats, please send /unlink_all . (UC06)"))
-            elif destination:
-                if reply_to:
-                    target_log = \
-                        self.db.get_msg_log(master_msg_id=utils.message_id_to_str(
-                            message.reply_to_message.chat.id,
-                            message.reply_to_message.message_id))
-                    if target_log:
-                        target = target_log.slave_origin_uid
-                        if target is not None:
-                            target_channel, target_uid, _ = utils.chat_id_str_to_id(target)
-                    else:
-                        return self.bot.reply_error(update,
-                                                    self._("Message is not found in ETM database. "
-                                                           "Please try with another message. (UC07)"))
-            else:
-                return self.bot.reply_error(update,
-                                            self._("This group is not linked to any chat. (UC06)"))
-
-        self.logger.debug("[%s] Telegram received. From private chat: %s; Group has multiple linked chats: %s; "
-                          "Message replied to another message: %s", message_id, private_chat, multi_slaves, reply_to)
-        self.logger.debug("[%s] Destination chat = %s", message_id, destination)
-        assert destination is not None
         channel, uid, gid = utils.chat_id_str_to_id(destination)
         if channel not in coordinator.slaves:
-            return self.bot.reply_error(update, self._("Internal error: Slave channel “{0}” not found.").format(channel))
+            return self.bot.reply_error(update,
+                                        self._("Internal error: Slave channel “{0}” not found.").format(channel))
 
         m = ETMMsg()
         log_message = True
@@ -926,13 +871,9 @@ class PatchMiddleware(EFBMiddleware):
             m.deliver_to = coordinator.slaves[channel]
             ### patch modified 👇 ###
             m.is_forward = bool(getattr(message, "forward_from", None))
-            if target and target_log is not None and target_channel == channel:
-                trgt_msg: ETMMsg = target_log.build_etm_msg(self.chat_manager, recur=False)
-                trgt_msg.target = None
-                m.target = trgt_msg
 
-                self.logger.debug("[%s] This message replies to another message of the same channel.\n"
-                                  "Chat ID: %s; Message ID: %s.", message_id, trgt_msg.chat.chat_uid, trgt_msg.uid)
+            if quote:
+                self.attach_target_message(message, m, channel)
             # Type specific stuff
             self.logger.debug("[%s] Message type from Telegram: %s", message_id, mtype)
 
@@ -941,13 +882,17 @@ class PatchMiddleware(EFBMiddleware):
                 self.logger.debug("[%s] EFB message type: %s", message_id, mtype)
             else:
                 self.logger.info("[%s] Message type %s is not supported by ETM", message_id, mtype)
-                raise EFBMessageTypeNotSupported(self._("Message type {} is not supported by ETM.").format(mtype.name))
+                raise EFBMessageTypeNotSupported(
+                    self._("{type_name} messages are not supported by EFB Telegram Master channel.")
+                        .format(type_name=mtype.name))
 
             if m.type not in coordinator.slaves[channel].supported_message_types:
                 self.logger.info("[%s] Message type %s is not supported by channel %s",
                                  message_id, m.type.name, channel)
-                raise EFBMessageTypeNotSupported(self._("Message type {0} is not supported by channel {1}.")
-                                                 .format(m.type.name, coordinator.slaves[channel].channel_name))
+                raise EFBMessageTypeNotSupported(
+                    self._("{type_name} messages are not supported by slave channel {channel_name}.")
+                        .format(type_name=m.type.name,
+                                channel_name=coordinator.slaves[channel].channel_name))
 
             # Parse message text and caption to markdown
             msg_md_text = message.text and message.text_markdown
@@ -963,9 +908,6 @@ class PatchMiddleware(EFBMiddleware):
             # Flag for edited message
             if edited:
                 m.edit = True
-                # Telegram Bot API did not provide any info about whether media is edited,
-                # so ``edit_media`` should be always flagged up to prevent unwanted issue.
-                m.edit_media = True
                 text = msg_md_text or msg_md_caption
                 msg_log = self.db.get_msg_log(master_msg_id=utils.message_id_to_str(update=update))
                 if not msg_log or msg_log.slave_message_id == self.db.FAIL_FLAG:
@@ -987,16 +929,18 @@ class PatchMiddleware(EFBMiddleware):
                     log_message = False
                     return
                 self.logger.debug('[%s] Message is edited (%s)', m.uid, m.edit)
+                if m.file_id and m.file_id != msg_log.file_id:
+                    m.edit_media = True
 
             ### patch modified start 👇 ###
             # 以rm开头回复来撤回自己发送的消息
-            if reply_to and message.reply_to_message.from_user.id == message.from_user.id and msg_md_text.startswith(self.DELETE_FLAG):
+            if quote and message.reply_to_message.from_user.id == message.from_user.id and msg_md_text.startswith(self.DELETE_FLAG):
                 m.edit = True
                 m.edit_media = True
                 msg_log = self.db.get_msg_log(master_msg_id=utils.message_id_to_str(
                             message.reply_to_message.chat.id,
                             message.reply_to_message.message_id))
-                if not msg_log or msg_log == self.db.FAIL_FLAG:
+                if not msg_log or msg_log.slave_message_id == self.db.FAIL_FLAG:
                     raise EFBMessageNotFound()
                 m.uid = msg_log.slave_message_id
                 coordinator.send_status(EFBMessageRemoval(
@@ -1008,20 +952,20 @@ class PatchMiddleware(EFBMiddleware):
                     try:
                         message.delete()
                     except telegram.TelegramError:
-                        message.reply_text(self._("Message removed in remote chat."))
+                        message.reply_text(self._("Message is removed in remote chat."))
                 else:
-                    message.reply_text(self._("Message removed in remote chat."))
-                self.db.delete_msg_log(master_msg_id=utils.message_id_to_str(
-                        message.reply_to_message.chat.id,
-                        message.reply_to_message.message_id))
+                    message.reply_text(self._("Message is removed in remote chat."))
+                # self.db.delete_msg_log(master_msg_id=utils.message_id_to_str(
+                #         message.reply_to_message.chat.id,
+                #         message.reply_to_message.message_id))
                 log_message = False
                 return
             ### patch modified end 👆 ###
 
             # Enclose message as an EFBMsg object by message type.
-            if mtype == TGMsgType.Text:
+            if mtype is TGMsgType.Text:
                 m.text = msg_md_text
-            elif mtype == TGMsgType.Photo:
+            elif mtype is TGMsgType.Photo:
                 m.text = msg_md_caption
                 m.mime = "image/jpeg"
                 self._check_file_download(message.photo[-1])
@@ -1029,50 +973,55 @@ class PatchMiddleware(EFBMiddleware):
                 # Convert WebP to the more common PNG
                 m.text = ""
                 self._check_file_download(message.sticker)
-            elif mtype == TGMsgType.Animation:
-                m.text = ""
+            elif mtype is TGMsgType.Animation:
+                m.text = msg_md_caption
                 self.logger.debug("[%s] Telegram message is a \"Telegram GIF\".", message_id)
                 m.filename = getattr(message.document, "file_name", None) or None
+                if m.filename and not m.filename.lower().endswith(".gif"):
+                    m.filename += ".gif"
                 m.mime = message.document.mime_type or m.mime
-            elif mtype == TGMsgType.Document:
+            elif mtype is TGMsgType.Document:
                 m.text = msg_md_caption
                 self.logger.debug("[%s] Telegram message type is document.", message_id)
                 m.filename = getattr(message.document, "file_name", None) or None
                 m.mime = message.document.mime_type
                 self._check_file_download(message.document)
-            elif mtype == TGMsgType.Video:
+            elif mtype is TGMsgType.Video:
                 m.text = msg_md_caption
                 m.mime = message.video.mime_type
                 self._check_file_download(message.video)
-            elif mtype == TGMsgType.Audio:
+            elif mtype is TGMsgType.VideoNote:
+                m.text = msg_md_caption
+                self._check_file_download(message.video)
+            elif mtype is TGMsgType.Audio:
                 m.text = "%s - %s\n%s" % (
                     message.audio.title, message.audio.performer, msg_md_caption)
                 m.mime = message.audio.mime_type
                 self._check_file_download(message.audio)
-            elif mtype == TGMsgType.Voice:
+            elif mtype is TGMsgType.Voice:
                 m.text = msg_md_caption
                 m.mime = message.voice.mime_type
                 self._check_file_download(message.voice)
-            elif mtype == TGMsgType.Location:
+            elif mtype is TGMsgType.Location:
                 # TRANSLATORS: Message body text for location messages.
                 m.text = self._("Location")
                 m.attributes = EFBMsgLocationAttribute(
                     message.location.latitude,
                     message.location.longitude
                 )
-            elif mtype == TGMsgType.Venue:
-                m.text = message.location.title + "\n" + message.location.adderss
+            elif mtype is TGMsgType.Venue:
+                m.text = f"📍 {message.location.title}\n{message.location.adderss}"
                 m.attributes = EFBMsgLocationAttribute(
                     message.venue.location.latitude,
                     message.venue.location.longitude
                 )
-            elif mtype == TGMsgType.Contact:
+            elif mtype is TGMsgType.Contact:
                 contact: telegram.Contact = message.contact
                 m.text = self._("Shared a contact: {first_name} {last_name}\n{phone_number}").format(
                     first_name=contact.first_name, last_name=contact.last_name, phone_number=contact.phone_number
                 )
             else:
-                raise EFBMessageTypeNotSupported(self._("Message type {0} is not supported.").format(mtype))
+                raise EFBMessageTypeNotSupported(self._("Message type {0} is not supported.").format(mtype.name))
 
             slave_msg = coordinator.send_message(m)
             if slave_msg and slave_msg.uid:
@@ -1084,7 +1033,8 @@ class PatchMiddleware(EFBMiddleware):
         except EFBMessageTypeNotSupported as e:
             self.bot.reply_error(update, e.args[0] or self._("Message type is not supported."))
         except EFBOperationNotSupported as e:
-            self.bot.reply_error(update, self._("Message editing is not supported.\n\n{exception!s}".format(exception=e)))
+            self.bot.reply_error(update,
+                                 self._("Message editing is not supported.\n\n{exception!s}".format(exception=e)))
         except EFBException as e:
             self.bot.reply_error(update, self._("Message is not sent.\n\n{exception!s}".format(exception=e)))
             self.logger.exception("Message is not sent. (update: %s, exception: %s)", update, e)
@@ -1137,6 +1087,7 @@ class PatchMiddleware(EFBMiddleware):
                         raise KeyError()
                 except (TypeError, KeyError, ValueError, ETree.ParseError):
                     return self.wechat_unsupported_msg(msg)
+        ### patch modified 👇 ###
         if self.channel_ews.flag("first_link_only"):
             links = links[:1]
 
@@ -1177,7 +1128,7 @@ class PatchMiddleware(EFBMiddleware):
 
         send_text_only = False
         self.logger.debug('[%s] Is edited: %s', msg.uid, msg.edit)
-        if msg.edit:
+        if msg.edit and msg.uid:
             if self.flag('delete_on_edit'):
                 msg_ids = json.loads(msg.uid)
                 if not msg.edit_media:
@@ -1187,7 +1138,7 @@ class PatchMiddleware(EFBMiddleware):
                 failed = 0
                 for i in msg_ids:
                     try:
-                        ews_utils.message_to_dummy_message(i, self).recall()
+                        ews_utils.message_id_to_dummy_message(i, self).recall()
                     except wxpy.ResponseError as e:
                         self.logger.error("[%s] Trying to recall message but failed: %s", msg.uid, e)
                         failed += 1
@@ -1212,18 +1163,18 @@ class PatchMiddleware(EFBMiddleware):
                         tgt_text += "…"
                     else:
                         tgt_text = qt_txt
-                    tgt_text = "「%s」" % tgt_text
                 elif max_length < 0:
-                    tgt_text = "「%s」" % qt_txt
+                    tgt_text = qt_txt
                 else:
                     tgt_text = ""
                 if isinstance(chat, wxpy.Group) and not msg.target.author.is_self:
-                    tgt_alias = "@%s\u2005 " % msg.target.author.display_name
+                    tgt_alias = "@%s\u2005：" % msg.target.author.display_name
                 else:
                     tgt_alias = ""
-                msg.text = "%s%s\n\n%s" % (tgt_alias, tgt_text, msg.text)
+                msg.text = f"「{tgt_alias}{tgt_text}」\n- - - - - - - - - - - - - - -\n{msg.text}"
             r.append(self._bot_send_msg(chat, msg.text))
-            self.logger.debug('[%s] Sent as a text message. %s', msg.uid, msg.text)
+            self.logger.debug(
+                '[%s] Sent as a text message. %s', msg.uid, msg.text)
         elif msg.type in (MsgType.Image, MsgType.Sticker, MsgType.Animation):
             self.logger.info("[%s] Image/GIF/Sticker %s", msg.uid, msg.type)
 
@@ -1244,18 +1195,22 @@ class PatchMiddleware(EFBMiddleware):
                         img = Image.open(file)
                         try:
                             alpha = img.split()[3]
-                            mask = Image.eval(alpha, lambda a: 255 if a <= 128 else 0)
+                            mask = Image.eval(
+                                alpha, lambda a: 255 if a <= 128 else 0)
                         except IndexError:
                             mask = Image.eval(img.split()[0], lambda a: 0)
-                        img = img.convert('RGB').convert('P', palette=Image.ADAPTIVE, colors=255)
+                        img = img.convert('RGB').convert(
+                            'P', palette=Image.ADAPTIVE, colors=255)
                         img.paste(255, mask)
                         img.save(f, transparency=255)
-                        msg.path = f.name
-                        self.logger.debug('[%s] Image converted from %s to GIF', msg.uid, msg.mime)
+                        msg.path = Path(f.name)
+                        self.logger.debug(
+                            '[%s] Image converted from %s to GIF', msg.uid, msg.mime)
                         file.close()
+                        if f.seek(0, 2) > self.MAX_FILE_SIZE:
+                            raise EFBMessageError(
+                                self._("Image size is too large. (IS02)"))
                         f.seek(0)
-                        if os.fstat(f.fileno()).st_size > self.MAX_FILE_SIZE:
-                            raise EFBMessageError(self._("Image size is too large. (IS02)"))
                         r.append(self._bot_send_image(chat, f.name, f))
                     finally:
                         if not file.closed:
@@ -1267,22 +1222,29 @@ class PatchMiddleware(EFBMiddleware):
                         out = Image.new("RGBA", img.size, (255, 255, 255, 255))
                         out.paste(img, img)
                         out.convert('RGB').save(f)
-                        msg.path = f.name
-                        self.logger.debug('[%s] Image converted from %s to JPEG', msg.uid, msg.mime)
+                        msg.path = Path(f.name)
+                        self.logger.debug(
+                            '[%s] Image converted from %s to JPEG', msg.uid, msg.mime)
                         file.close()
+                        if f.seek(0, 2) > self.MAX_FILE_SIZE:
+                            raise EFBMessageError(
+                                self._("Image size is too large. (IS02)"))
                         f.seek(0)
-                        if os.fstat(f.fileno()).st_size > self.MAX_FILE_SIZE:
-                            raise EFBMessageError(self._("Image size is too large. (IS02)"))
                         r.append(self._bot_send_image(chat, f.name, f))
                     finally:
                         if not file.closed:
                             file.close()
             else:
                 try:
-                    if os.fstat(file.fileno()).st_size > self.MAX_FILE_SIZE:
-                        raise EFBMessageError(self._("Image size is too large. (IS01)"))
-                    self.logger.debug("[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
-                    r.append(self._bot_send_image(chat, msg.path, file))
+                    if file.seek(0, 2) > self.MAX_FILE_SIZE:
+                        raise EFBMessageError(
+                            self._("Image size is too large. (IS01)"))
+                    file.seek(0)
+                    self.logger.debug(
+                        "[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
+                    filename = msg.filename or (msg.path and msg.path.name)
+                    assert filename
+                    r.append(self._bot_send_image(chat, filename, file))
                 finally:
                     if not file.closed:
                         file.close()
@@ -1292,18 +1254,25 @@ class PatchMiddleware(EFBMiddleware):
         elif msg.type in (MsgType.File, MsgType.Audio):
             self.logger.info("[%s] Sending %s to WeChat\nFileName: %s\nPath: %s\nFilename: %s",
                              msg.uid, msg.type, msg.text, msg.path, msg.filename)
-            r.append(self._bot_send_file(chat, msg.filename, file=msg.file))
+            filename = msg.filename or (msg.path and msg.path.name)
+            assert filename and msg.file
+            r.append(self._bot_send_file(chat, filename, file=msg.file))
             ### patch modified 👇 ###
             if msg.text and not msg.is_forward:
                 self._bot_send_msg(chat, msg.text)
-            msg.file.close()
+            if not msg.file.closed:
+                msg.file.close()
         elif msg.type == MsgType.Video:
-            self.logger.info("[%s] Sending video to WeChat\nFileName: %s\nPath: %s", msg.uid, msg.text, msg.path)
-            r.append(self._bot_send_video(chat, msg.path, file=msg.file))
+            self.logger.info(
+                "[%s] Sending video to WeChat\nFileName: %s\nPath: %s", msg.uid, msg.text, msg.path)
+            filename = msg.filename or (msg.path and msg.path.name)
+            assert filename and msg.file
+            r.append(self._bot_send_video(chat, filename, file=msg.file))
             ### patch modified 👇 ###
             if msg.text and not msg.is_forward:
                 r.append(self._bot_send_msg(chat, msg.text))
-            msg.file.close()
+            if not msg.file.closed:
+                msg.file.close()
         else:
             raise EFBMessageTypeNotSupported()
 
@@ -1352,10 +1321,3 @@ class PatchMiddleware(EFBMiddleware):
                 start_new_thread(process, use_caller_name=True)
             else:
                 process()
-
-    @staticmethod
-    def get_node_text(root: Element, path: str, fallback: str) -> str:
-        node = root.find(path)
-        if node is not None:
-            return node.text or fallback
-        return fallback
