@@ -237,6 +237,7 @@ class PatchMiddleware(EFBMiddleware):
             self.wechat_shared_image_msg = self.channel_ews.slave_message.wechat_shared_image_msg
             self.wechat_shared_link_msg = self.channel_ews.slave_message.wechat_shared_link_msg
             self.wechat_raw_link_msg = self.channel_ews.slave_message.wechat_raw_link_msg
+            self.html_substitutions = self.channel_ews.slave_message.html_substitutions
             self.wechat_text_msg = self.channel_ews.slave_message.wechat_text_msg
             self.get_node_text = self.channel_ews.slave_message.get_node_text
             self.UNSUPPORTED_MSG_PROMPT = self.channel_ews.slave_message.UNSUPPORTED_MSG_PROMPT
