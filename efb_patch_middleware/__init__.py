@@ -211,6 +211,7 @@ class PatchMiddleware(EFBMiddleware):
             self.IMG_SIZE_MAX_RATIO = self.slave_messages.IMG_SIZE_MAX_RATIO
 
             self.chat_dest_cache = self.slave_messages.chat_dest_cache
+            self.html_substitutions = self.slave_messages.html_substitutions
 
             self._send_cached_chat_warning = self.master_messages._send_cached_chat_warning
             self._check_file_download = self.master_messages._check_file_download
@@ -237,7 +238,6 @@ class PatchMiddleware(EFBMiddleware):
             self.wechat_shared_image_msg = self.channel_ews.slave_message.wechat_shared_image_msg
             self.wechat_shared_link_msg = self.channel_ews.slave_message.wechat_shared_link_msg
             self.wechat_raw_link_msg = self.channel_ews.slave_message.wechat_raw_link_msg
-            self.html_substitutions = self.channel_ews.slave_message.html_substitutions
             self.wechat_text_msg = self.channel_ews.slave_message.wechat_text_msg
             self.get_node_text = self.channel_ews.slave_message.get_node_text
             self.UNSUPPORTED_MSG_PROMPT = self.channel_ews.slave_message.UNSUPPORTED_MSG_PROMPT
@@ -256,7 +256,7 @@ class PatchMiddleware(EFBMiddleware):
         """
         self.AUTO_MARK_AS_READ = True
         self.REMOVE_EMOJI_IN_TITLE = True
-        config_path = utils.get_config_path(self.middleware_id)
+        config_path = efb_utils.get_config_path(self.middleware_id)
         if not config_path.exists():
             return
 
