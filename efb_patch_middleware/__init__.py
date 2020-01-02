@@ -974,9 +974,9 @@ class PatchMiddleware(EFBMiddleware):
                     try:
                         message.delete()
                     except telegram.TelegramError:
-                        message.reply_text(self._("Message is removed in remote chat."))
+                        message.reply_text(self._("Message is removed in remote chat."), disable_notification=True)
                 else:
-                    message.reply_text(self._("Message is removed in remote chat."))
+                    message.reply_text(self._("Message is removed in remote chat."), disable_notification=True)
                 # self.db.delete_msg_log(master_msg_id=utils.message_id_to_str(
                 #         message.reply_to_message.chat.id,
                 #         message.reply_to_message.message_id))
