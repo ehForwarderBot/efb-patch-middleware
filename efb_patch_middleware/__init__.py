@@ -384,7 +384,7 @@ class PatchMiddleware(EFBMiddleware):
         if msg.text:
             text = self.html_substitutions(msg)
         else:
-            text = "🎥"
+            text = ""
         ### patch modified end 👆 ###
         try:
             if old_msg_id:
@@ -426,7 +426,7 @@ class PatchMiddleware(EFBMiddleware):
         if msg.text:
             text = self.html_substitutions(msg)
         else:
-            text = "📄"
+            text = ""
         ### patch modified end 👆 ###
 
         try:
@@ -468,7 +468,7 @@ class PatchMiddleware(EFBMiddleware):
         if msg.text:
             text = self.html_substitutions(msg)
         else:
-            text = "🖼️"
+            text = ""
         ### patch modified end 👆 ###
         try:
             # Avoid Telegram compression of pictures by sending high definition image messages as files
