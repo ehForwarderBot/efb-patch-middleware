@@ -10,6 +10,7 @@ import telegram
 
 from PIL import Image
 from pathlib import Path
+from ruamel.yaml import YAML
 from tempfile import NamedTemporaryFile
 from xml.etree import ElementTree as ETree
 from xml.etree.ElementTree import Element
@@ -182,6 +183,7 @@ class PatchMiddleware(EFBMiddleware):
     def __init__(self, instance_id=None):
         super().__init__()
         self.tgdb: DatabaseManager = DatabaseManager(self.middleware_id)
+        self.load_config()
 
         if hasattr(coordinator, "master") and isinstance(coordinator.master, EFBChannel):
             self.channel = coordinator.master
@@ -244,6 +246,21 @@ class PatchMiddleware(EFBMiddleware):
             self.ews_slave_message_patch()
 
         # self.logger.log(99, "[%s] init...", self.middleware_name)
+
+    def load_config(self):
+        """
+        Load configuration from path specified by the framework.
+
+        Configuration file is in YAML format.
+        """
+        config_path = utils.get_config_path(self.middleware_id)
+        if not config_path.exists():
+            return
+
+        with config_path.open() as f:
+            data = YAML().load(f)
+
+            self.AUTO_MARK_AS_READ = data.get("auto_mark_as_read", True)
 
     def etm_slave_messages_patch(self):
         self.slave_messages.generate_message_template = self.generate_message_template
