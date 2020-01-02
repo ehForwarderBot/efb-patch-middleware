@@ -33,6 +33,15 @@ Add the following configuration under `blueset.telegram/config.yaml`, and send t
 tg_mp: -12334557 # telegram group id
 ```
 
+### Config
+
+file path `~/.ehforwarderbot/profiles/default/patch.PatchMiddleware/config.yaml`  
+
+```yaml
+auto_mark_as_read: True # auto mark as read in wechat phone client
+remove_emoji_in_title: True # wouldn't remove emoji in telegram group title if this is set False
+```
+
 ### Installation
 
 ```bash

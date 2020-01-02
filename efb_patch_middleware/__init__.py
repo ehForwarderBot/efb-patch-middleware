@@ -253,6 +253,8 @@ class PatchMiddleware(EFBMiddleware):
 
         Configuration file is in YAML format.
         """
+        self.AUTO_MARK_AS_READ = True
+        self.REMOVE_EMOJI_IN_TITLE = True
         config_path = utils.get_config_path(self.middleware_id)
         if not config_path.exists():
             return
@@ -261,6 +263,7 @@ class PatchMiddleware(EFBMiddleware):
             data = YAML().load(f)
 
             self.AUTO_MARK_AS_READ = data.get("auto_mark_as_read", True)
+            self.REMOVE_EMOJI_IN_TITLE = data.get("remove_emoji_in_title", True)
 
     def etm_slave_messages_patch(self):
         self.slave_messages.generate_message_template = self.generate_message_template
@@ -310,13 +313,14 @@ class PatchMiddleware(EFBMiddleware):
         return user.status not in ('administrator', 'creator')
 
     def ews_set_mark_as_read(self):
-        self.alive = self.channel_ews.bot.alive
-        self.channel_ews.bot.auto_mark_as_read = True
-        self.auto_mark_as_read = self.channel_ews.bot.auto_mark_as_read
-        self.mark_as_read_cache: ChatDestinationCache = ChatDestinationCache('enabled')
-        self.channel_ews.bot._process_message = self._process_message
-        WXPYBOT._process_message = self._process_message
-        # self.logger.log(99, "set auto_mark_as_read to [%s]", self.channel_ews.bot.auto_mark_as_read)
+        if self.AUTO_MARK_AS_READ:
+            self.alive = self.channel_ews.bot.alive
+            self.channel_ews.bot.auto_mark_as_read = True
+            self.auto_mark_as_read = self.channel_ews.bot.auto_mark_as_read
+            self.mark_as_read_cache: ChatDestinationCache = ChatDestinationCache('enabled')
+            self.channel_ews.bot._process_message = self._process_message
+            WXPYBOT._process_message = self._process_message
+            # self.logger.log(99, "set auto_mark_as_read to [%s]", self.channel_ews.bot.auto_mark_as_read)
 
     def ews_init_patch(self):
         self.channel_ews.send_message = self.send_message
@@ -681,7 +685,7 @@ class PatchMiddleware(EFBMiddleware):
             chat_title = f"{chat.chat_alias or chat.chat_name}"
             self.tgdb.add_tg_groups(master_id=tg_chat, master_name=chat_title)
             self.bot.set_chat_title(tg_chat, self.truncate_ellipsis(
-                chat_title, self.MAX_LEN_CHAT_TITLE))
+                chat_title if self.REMOVE_EMOJI_IN_TITLE else chat.chat_title, self.MAX_LEN_CHAT_TITLE))
             ### patch modified end 👆 ###
 
             # Update remote group members list to Telegram group description if available
@@ -779,7 +783,7 @@ class PatchMiddleware(EFBMiddleware):
             if chat is None:
                 raise EFBChatNotFound()
             chat = ETMChat(chat=chat, db=self.db)
-            # self.bot.set_chat_title(tg_chat, chat.chat_title)
+
             chat_title=f"{chat.chat_alias or chat.chat_name}"
             self.tgdb.add_tg_groups(master_id=tg_chat, master_name=chat_title, multi_slaves=True)
             update.message.reply_text(self._('Chat related.'))
