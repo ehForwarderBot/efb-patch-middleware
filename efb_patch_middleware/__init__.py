@@ -228,6 +228,7 @@ class PatchMiddleware(Middleware):
             self.channel_ews = coordinator.slaves['blueset.wechat']
             self.chats = self.channel_ews.chats
             self.flag = self.channel_ews.flag
+            self.user_auth_chat = self.channel_ews.user_auth_chat
 
             self.registered = self.channel_ews.bot.registered
             self._bot_send_msg = self.channel_ews._bot_send_msg
