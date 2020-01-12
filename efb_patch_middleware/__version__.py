@@ -1,3 +1,3 @@
 # conding=utf-8
 
-__version__ = "0.0.10b4"
+__version__ = "0.0.10b5"
