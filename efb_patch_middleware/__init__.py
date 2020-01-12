@@ -21,7 +21,7 @@ from telegram.ext import CallbackContext, Filters, MessageHandler, CommandHandle
 from telegram.error import BadRequest
 from telegram.utils.helpers import escape_markdown
 
-from ehforwarderbot import EFBMiddleware, Message, \
+from ehforwarderbot import Middleware, Message, \
     coordinator, Channel, utils as efb_utils
 from ehforwarderbot.constants import MsgType
 from ehforwarderbot.chat import ChatNotificationState, SelfChatMember, GroupChat, PrivateChat, SystemChat, Chat
@@ -170,7 +170,7 @@ tg管理员可发消息
 建立数据库保存tg群组与微信聊天/群组名称的映射，没有绑定时，尝试查找相同名称的群组自动绑定
 删除接收图片、视频、文件时，不必要的消息，比如：sent a picture.
 """
-class PatchMiddleware(EFBMiddleware):
+class PatchMiddleware(Middleware):
     """
     EFB Middleware - PatchMiddleware
     """
