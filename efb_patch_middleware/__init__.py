@@ -31,8 +31,9 @@ from ehforwarderbot.types import ModuleID, ChatID, MessageID
 from ehforwarderbot.message import LocationAttribute
 from ehforwarderbot.status import MessageRemoval
 
-from efb_telegram_master import ETMChat, utils
+from efb_telegram_master import utils
 from efb_telegram_master.utils import TelegramMessageID, TelegramChatID, EFBChannelChatIDStr, TgChatMsgIDStr
+from efb_telegram_master.chat import convert_chat
 from efb_telegram_master.constants import Emoji
 from efb_telegram_master.message import ETMMsg
 from efb_telegram_master.msg_type import TGMsgType
@@ -391,7 +392,7 @@ class PatchMiddleware(Middleware):
             msg_template = f"{Emoji.UNKNOWN} {msg.author.long_name} ({msg.chat.display_name}):"
         return msg_template
 
-    def get_display_name(self, chat: ETMChat) -> str:
+    def get_display_name(self, chat: Chat) -> str:
         return chat.name if not chat.alias or chat.alias in chat.name \
             else (chat.alias if chat.name in chat.alias else f"{chat.alias} ({chat.name})")
 
@@ -592,7 +593,7 @@ class PatchMiddleware(Middleware):
         ### patch modified start 👇 ###
         # 如果没有绑定，判断同名的tg群组，自动尝试关联
         if not tg_chat:
-            t_chat = ETMChat(chat=msg.chat, db=self.db)
+            t_chat = convert_chat(self.db, msg.chat)
             tg_mp = self.channel.config.get('tg_mp')
 
             master_name = f"{t_chat.alias or t_chat.name}"
@@ -778,7 +779,7 @@ class PatchMiddleware(Middleware):
             chat = channel.get_chat(chat_uid)
             if chat is None:
                 raise EFBChatNotFound()
-            chat = ETMChat(chat=chat, db=self.db)
+            chat = convert_chat(self.db, chat)
 
             chat_title=f"{chat.alias or chat.name}"
             self.tgdb.add_tg_groups(master_id=tg_chat, master_name=chat_title, multi_slaves=True)
@@ -826,7 +827,7 @@ class PatchMiddleware(Middleware):
             chat = channel.get_chat(chat_uid)
             if chat is None:
                 raise EFBChatNotFound()
-            chat = ETMChat(chat=chat, db=self.db)
+            chat = convert_chat(self.db, chat)
 
             chat_title=f"{chat.alias or chat.name}"
             self.tgdb.remove_tg_groups(master_name=chat_title)
