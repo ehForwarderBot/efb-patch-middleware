@@ -24,7 +24,7 @@ from telegram.utils.helpers import escape_markdown
 from ehforwarderbot import Middleware, Message, \
     coordinator, Channel, utils as efb_utils
 from ehforwarderbot.constants import MsgType
-from ehforwarderbot.chat import ChatNotificationState, SelfChatMember, GroupChat, PrivateChat, SystemChat, Chat
+from ehforwarderbot.chat import ChatNotificationState, SelfChatMember, GroupChat, PrivateChat, SystemChat, Chat, SystemChatMember
 from ehforwarderbot.exceptions import EFBChatNotFound, EFBOperationNotSupported, EFBMessageTypeNotSupported, \
     EFBMessageNotFound, EFBMessageError, EFBException
 from ehforwarderbot.types import ModuleID, ChatID, MessageID
