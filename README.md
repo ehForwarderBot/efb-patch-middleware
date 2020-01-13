@@ -1,6 +1,7 @@
 Patches to enhance EFB functionality
 ==========================
 [![PyPI release](https://img.shields.io/pypi/v/efb-patch-middleware.svg)](https://pypi.org/project/efb-patch-middleware/)
+[![Downloads](https://pepy.tech/badge/efb-patch-middleware/month)](https://pypi.org/project/efb-patch-middleware/)
 
 ### Main Function
 
