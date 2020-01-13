@@ -33,7 +33,7 @@ from ehforwarderbot.status import MessageRemoval
 
 from efb_telegram_master import utils
 from efb_telegram_master.utils import TelegramMessageID, TelegramChatID, EFBChannelChatIDStr, TgChatMsgIDStr
-from efb_telegram_master.chat import convert_chat
+from efb_telegram_master.chat import convert_chat, ETMGroupChat
 from efb_telegram_master.constants import Emoji
 from efb_telegram_master.message import ETMMsg
 from efb_telegram_master.msg_type import TGMsgType
