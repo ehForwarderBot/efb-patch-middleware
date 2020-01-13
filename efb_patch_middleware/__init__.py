@@ -264,7 +264,7 @@ class PatchMiddleware(Middleware):
             return
 
         with config_path.open() as f:
-            data = YAML().load(f)
+            data = YAML().safe_load(f)
 
             self.AUTO_MARK_AS_READ = data.get("auto_mark_as_read", True)
             self.REMOVE_EMOJI_IN_TITLE = data.get("remove_emoji_in_title", True)
