@@ -8,6 +8,11 @@ import sched
 import logging
 import telegram
 
+import binascii
+import functools
+import inspect
+from types import ModuleType
+
 from PIL import Image
 from pathlib import Path
 from ruamel.yaml import YAML
@@ -15,7 +20,7 @@ from tempfile import NamedTemporaryFile
 from xml.etree import ElementTree as ETree
 from xml.etree.ElementTree import Element
 
-from typing import Tuple, Optional, List, overload, Callable, Sequence, Any, Dict, IO
+from typing import Tuple, Optional, List, overload, Callable, Sequence, Any, Dict, IO, Type, Union
 from telegram import Update, TelegramError, InputMediaPhoto, InputMediaDocument, InputMediaVideo
 from telegram.ext import CallbackContext, Filters, MessageHandler, CommandHandler
 from telegram.error import BadRequest
@@ -60,6 +65,8 @@ OldMsgID = Tuple[TelegramChatID, TelegramMessageID]
 schedule = sched.scheduler(time.time, time.sleep)
 
 DALAY_MARK_AS_READ = 10
+
+patch_result = []
 
 class BaseModel(Model):
     class Meta:
@@ -249,6 +256,9 @@ class PatchMiddleware(Middleware):
             self.ews_init_patch()
             self.ews_slave_message_patch()
 
+        if len(patch_result) > 0:
+            self.logger.log(99, "patch result: [%s]", patch_result)
+            self.bot.send_message(self.channel.config['admins'][0], '中间件[PatchMiddleware]匹配校验失败，请检查版本')
         # self.logger.log(99, "[%s] init...", self.middleware_name)
 
     def load_config(self):
@@ -269,17 +279,39 @@ class PatchMiddleware(Middleware):
             self.AUTO_MARK_AS_READ = data.get("auto_mark_as_read", True)
             self.REMOVE_EMOJI_IN_TITLE = data.get("remove_emoji_in_title", True)
 
+    def patch_check(self, f: Callable, crc32: int, patch_base: Union[ModuleType, Type], patch_attr: str):
+        """检查并覆盖指定的函数。
+
+        参数：
+            f：需要覆盖的新函数（已提供）
+            crc32：原函数源码的 CRC32 值（已提供）
+            patch_base：需要被覆盖的函数所在类或模块
+            patch_attr：需要被覆盖的函数名称
+
+        """
+        patch_source = getattr(patch_base, patch_attr)
+        base_crc32 = binascii.crc32(inspect.getsource(patch_source).encode())
+        if base_crc32 != crc32:
+            patch_result.append(f"{patch_attr} CRC32值不匹配，指定的值为{crc32}，实际值为{base_crc32}。")
+            return
+        setattr(patch_base, patch_attr, f)
+
+
+    def patch(self, func, patch_base, patch_attr, crc32: int):
+        self.patch_check(func, crc32, patch_base, patch_attr)
+
     def etm_slave_messages_patch(self):
-        self.slave_messages.generate_message_template = self.generate_message_template
-        self.slave_messages.slave_message_video = self.slave_message_video
-        self.slave_messages.slave_message_file = self.slave_message_file
-        self.slave_messages.slave_message_image = self.slave_message_image
-        self.slave_messages.get_slave_msg_dest = self.get_slave_msg_dest
+        self.patch(self.generate_message_template, self.slave_messages, "generate_message_template", 3121137375)
+        self.patch(self.slave_message_video, self.slave_messages, "slave_message_video", 241855262)
+        self.patch(self.slave_message_file, self.slave_messages, "slave_message_file", 2901539229)
+        self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 723145301)
+        self.patch(self.get_slave_msg_dest, self.slave_messages, "get_slave_msg_dest", 3457314213)
+
 
     def etm_master_messages_patch(self):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
-        self.master_messages.process_telegram_message = self.process_telegram_message
+        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 972051836)
 
         self.bot.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
         self.bot.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
