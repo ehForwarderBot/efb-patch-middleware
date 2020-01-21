@@ -105,7 +105,7 @@ class DatabaseManager:
         One Master channel with one/many Slave channel.
 
         Args:
-            master_id (str): telegram group id
+            master_id (str): Telegram group id
             master_name (str): Slave channel name
             multi_slaves: Allow linking to multiple slave channels.
         """
@@ -154,6 +154,26 @@ class DatabaseManager:
         except DoesNotExist:
             # 缓存不存在结果，避免持续查db
             self.tg_cache.set(master_name, True, 300)
+            return None
+
+    def get_wx_groups(self, master_id):
+        """
+        Get chat association information.
+        Only one parameter is to be provided.
+
+        Args:
+            master_id (str): Telegram group id
+
+        Returns:
+            The association information.
+        """
+        if self.tg_cache.get(master_id):
+            return None
+        try:
+            return TgGroups.select().where(TgGroups.master_id == master_id, TgGroups.multi_slaves.is_null(True)).first()
+        except DoesNotExist:
+            # 缓存不存在结果，避免持续查db
+            self.tg_cache.set(master_id, True, 300)
             return None
 
     def update_tg_groups(self, master_id, master_name):
@@ -222,6 +242,7 @@ class PatchMiddleware(Middleware):
             self.chat_dest_cache = self.slave_messages.chat_dest_cache
             self.html_substitutions = self.slave_messages.html_substitutions
 
+            self.get_singly_linked_chat_id_str = self.master_messages.get_singly_linked_chat_id_str
             self._send_cached_chat_warning = self.master_messages._send_cached_chat_warning
             self._check_file_download = self.master_messages._check_file_download
             self.attach_target_message = self.master_messages.attach_target_message
@@ -311,6 +332,7 @@ class PatchMiddleware(Middleware):
     def etm_master_messages_patch(self):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
+        self.patch(self.msg, self.master_messages, "msg", 3836143189)
         self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 972051836)
 
         self.bot.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
@@ -874,6 +896,75 @@ class PatchMiddleware(Middleware):
             self.logger.exception("Unknown error caught when release chat.")
             return self.bot.reply_error(update, self._('Error occurred while release chat. \n'
                                                        '{0}'.format(e)))
+
+    # efb_telegram_master/master_message.py
+    def msg(self, update: Update, context: CallbackContext):
+        """
+        Process, wrap and dispatch messages from user.
+        """
+
+        message: Message = update.effective_message
+        mid = utils.message_id_to_str(update=update)
+
+        self.logger.debug("[%s] Received message from Telegram: %s", mid, message.to_dict())
+
+        # if the chat is singly-linked
+        destination = self.get_singly_linked_chat_id_str(update.effective_chat)
+        if destination is None:  # not singly linked
+            quote = False
+            self.logger.debug("[%s] Chat %s is not singly-linked", mid, update.effective_chat)
+            reply_to = message.reply_to_message
+            cached_dest = self.chat_dest_cache.get(message.chat.id)
+            if reply_to:
+                self.logger.debug("[%s] Message is quote-replying to %s", mid, reply_to)
+                dest_msg = self.db.get_msg_log(
+                    master_msg_id=utils.message_id_to_str(reply_to.chat.id, reply_to.message_id)
+                )
+                if dest_msg:
+                    destination = dest_msg.slave_origin_uid
+                    self.chat_dest_cache.set(message.chat.id, destination)
+                    self.logger.debug("[%s] Quoted message is found in database with destination: %s", mid, destination)
+            elif cached_dest:
+                self.logger.debug("[%s] Cached destination found: %s", mid, cached_dest)
+                destination = cached_dest
+                self._send_cached_chat_warning(update, message.chat.id, cached_dest)
+        else:
+            quote = message.reply_to_message is not None
+            self.logger.debug("[%s] Chat %s is singly-linked to %s", mid, message.chat, destination)
+
+        self.logger.debug("[%s] Destination chat = %s", mid, destination)
+
+        if destination is None:
+            self.logger.debug("[%s] Destination is not found for this message", mid)
+            candidates = (
+                 self.db.get_recent_slave_chats(message.chat.id, limit=5) or
+                 self.db.get_chat_assoc(master_uid=utils.chat_id_to_str(self.channel_id, message.chat.id))[:5]
+            )
+            if candidates:
+                self.logger.debug("[%s] Candidate suggestions are found for this message: %s", mid, candidates)
+                tg_err_msg = message.reply_text(self._("Error: No recipient specified.\n"
+                                                       "Please reply to a previous message. (MS01)"), quote=True)
+                self.channel.chat_binding.register_suggestions(update, candidates,
+                                                               update.effective_chat.id, tg_err_msg.message_id)
+            else:
+                ### patch modified start 👇 ###
+                chat_relation = self.tgdb.get_wx_groups(master_id=message.chat.id)
+                if chat_relation is not None:
+                    try:
+                        relate_chat = wxpy.utils.ensure_one(self.channel_ews.bot.chats().search(chat_relation.master_name))
+                        # self.logger.log(99, "relate_chat: [%s] [%s]", relate_chat.puid, relate_chat.__dict__)
+                        destination = f"blueset.wechat {relate_chat.puid}"
+                        return self.process_telegram_message(update, context, destination, quote=quote)
+                    except ValueError:
+                        self.logger.log("guess destination chat failed.")
+                    except Exception:
+                        self.logger.exception('guess destination chat error.')
+                ### patch modified end 👆 ###
+                self.logger.debug("[%s] Candidate suggestions not found, give up.", mid)
+                message.reply_text(self._("Error: No recipient specified.\n"
+                                          "Please reply to a previous message. (MS02)"), quote=True)
+        else:
+            return self.process_telegram_message(update, context, destination, quote=quote)
 
     # efb_telegram_master/master_message.py
     def process_telegram_message(self, update: Update, context: CallbackContext,

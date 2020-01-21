@@ -9,7 +9,7 @@ Patches to enhance EFB functionality
 - Automatically mark read on WeChat (**received messages on telegram** will mark read)
 - In a group, only one note is displayed when the note has the same name (or one is included by the other)
 - ~~/update_info command adds WeChat group member information to telegram group description~~ (supported)
-- Establish a database to save the tg group and WeChat chat / group name mapping. When there is no binding, try to find a group with the same name and automatically bind
+- Establish a database to save the tg group and WeChat chat/group name mapping. When there is no binding, try to find a group with the same name and automatically bind (two-way)
 - Delete unnecessary messages when receiving pictures, videos, files, for example: sent a picture. <sup>[1]</sup>
 - Applet sharing adds "Applet:" title prefix to distinguish regular links
 - Use <code>rm`</code> to reply to the message sent by yourself (telegram message cannot be edited )
