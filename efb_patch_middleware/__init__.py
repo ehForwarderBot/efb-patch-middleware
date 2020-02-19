@@ -241,6 +241,7 @@ class PatchMiddleware(Middleware):
             self.IMG_SIZE_MAX_RATIO = self.slave_messages.IMG_SIZE_MAX_RATIO
 
             self.chat_dest_cache = self.slave_messages.chat_dest_cache
+            self.check_file_size = self.slave_messages.check_file_size
             self.html_substitutions = self.slave_messages.html_substitutions
 
             self.get_singly_linked_chat_id_str = self.master_messages.get_singly_linked_chat_id_str
@@ -473,8 +474,23 @@ class PatchMiddleware(Middleware):
             text = ""
         ### patch modified end 👆 ###
         try:
+            file_too_large = self.check_file_size(msg.file)
+            edit_media = msg.edit_media
+            if file_too_large:
             if old_msg_id:
                 if msg.edit_media:
+                        edit_media = False
+                    self.bot.send_message(chat_id=old_msg_id[0], reply_to_message_id=old_msg_id[1], text=file_too_large)
+                else:
+                    message = self.bot.send_message(chat_id=tg_dest, reply_to_message_id=target_msg_id, text=text,
+                                                    parse_mode="HTML", reply_markup=reply_markup,
+                                                    disable_notification=silent,
+                                                    prefix=msg_template, suffix=reactions)
+                    message.reply_text(file_too_large)
+                    return message
+
+            if old_msg_id:
+                if edit_media:
                     assert msg.file is not None
                     self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=InputMediaVideo(msg.file))
                 return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1], reply_markup=reply_markup,
@@ -518,8 +534,23 @@ class PatchMiddleware(Middleware):
         ### patch modified end 👆 ###
 
         try:
+            file_too_large = self.check_file_size(msg.file)
+            edit_media = msg.edit_media
+            if file_too_large:
             if old_msg_id:
                 if msg.edit_media:
+                        edit_media = False
+                    self.bot.send_message(chat_id=old_msg_id[0], reply_to_message_id=old_msg_id[1], text=file_too_large)
+                else:
+                    message = self.bot.send_message(chat_id=tg_dest, reply_to_message_id=target_msg_id, text=text,
+                                                    parse_mode="HTML", reply_markup=reply_markup,
+                                                    disable_notification=silent,
+                                                    prefix=msg_template, suffix=reactions)
+                    message.reply_text(file_too_large)
+                    return message
+
+            if old_msg_id:
+                if edit_media:
                     assert msg.file is not None
                     self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=InputMediaDocument(msg.file))
                 return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1], reply_markup=reply_markup,
@@ -590,9 +621,23 @@ class PatchMiddleware(Middleware):
             except Exception:  # Ignore when the image cannot be properly identified.
                 send_as_file = False
 
+            file_too_large = self.check_file_size(msg.file)
+            edit_media = msg.edit_media
+            if file_too_large:
+                if old_msg_id:
+                    if msg.edit_media:
+                        edit_media = False
+                    self.bot.send_message(chat_id=old_msg_id[0], reply_to_message_id=old_msg_id[1], text=file_too_large)
+                else:
+                    message = self.bot.send_message(chat_id=tg_dest, reply_to_message_id=target_msg_id, text=text,
+                                                    parse_mode="HTML", reply_markup=reply_markup, disable_notification=silent,
+                                                    prefix=msg_template, suffix=reactions)
+                    message.reply_text(file_too_large)
+                    return message
+
             if old_msg_id:
                 try:
-                    if msg.edit_media:
+                    if edit_media:
                         if send_as_file:
                             media = InputMediaDocument(msg.file)
                         else:
@@ -1072,6 +1117,7 @@ class PatchMiddleware(Middleware):
                     return
                 self.logger.debug('[%s] Message is edited (%s)', m.uid, m.edit)
                 if m.file_id and m.file_id != msg_log.file_id:
+                    self.logger.debug("[%s] Message media is edited (%s -> %s)", m.uid, msg_log.file_id, m.file_id)
                     m.edit_media = True
 
             ### patch modified start 👇 ###
@@ -1503,6 +1549,10 @@ class PatchMiddleware(Middleware):
                 .where((SlaveChatInfo.slave_chat_uid == slave_chat_uid) &
                        (SlaveChatInfo.slave_chat_group_id.is_null(True))).first()
             if not contact.slave_chat_alias:
+                contact = SlaveChatInfo.select() \
+                    .where((SlaveChatInfo.slave_chat_uid == slave_chat_uid) &
+                        (SlaveChatInfo.slave_chat_alias.is_null(False))).first()
+                if not contact.slave_chat_alias:
                 return None
             # TODO cache
             return contact.slave_chat_alias
