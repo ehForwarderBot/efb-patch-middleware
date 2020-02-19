@@ -1548,11 +1548,11 @@ class PatchMiddleware(Middleware):
             contact = SlaveChatInfo.select() \
                 .where((SlaveChatInfo.slave_chat_uid == slave_chat_uid) &
                        (SlaveChatInfo.slave_chat_group_id.is_null(True))).first()
-            if not contact.slave_chat_alias:
+            if not contact or not contact.slave_chat_alias:
                 contact = SlaveChatInfo.select() \
                     .where((SlaveChatInfo.slave_chat_uid == slave_chat_uid) &
                            (SlaveChatInfo.slave_chat_alias.is_null(False))).first()
-                if not contact.slave_chat_alias:
+                if not contact or not contact.slave_chat_alias:
                     return None
             # TODO cache
             return contact.slave_chat_alias
