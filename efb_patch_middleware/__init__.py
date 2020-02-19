@@ -477,8 +477,8 @@ class PatchMiddleware(Middleware):
             file_too_large = self.check_file_size(msg.file)
             edit_media = msg.edit_media
             if file_too_large:
-            if old_msg_id:
-                if msg.edit_media:
+                if old_msg_id:
+                    if msg.edit_media:
                         edit_media = False
                     self.bot.send_message(chat_id=old_msg_id[0], reply_to_message_id=old_msg_id[1], text=file_too_large)
                 else:
@@ -537,8 +537,8 @@ class PatchMiddleware(Middleware):
             file_too_large = self.check_file_size(msg.file)
             edit_media = msg.edit_media
             if file_too_large:
-            if old_msg_id:
-                if msg.edit_media:
+                if old_msg_id:
+                    if msg.edit_media:
                         edit_media = False
                     self.bot.send_message(chat_id=old_msg_id[0], reply_to_message_id=old_msg_id[1], text=file_too_large)
                 else:
@@ -1551,7 +1551,7 @@ class PatchMiddleware(Middleware):
             if not contact.slave_chat_alias:
                 contact = SlaveChatInfo.select() \
                     .where((SlaveChatInfo.slave_chat_uid == slave_chat_uid) &
-                           (SlaveChatInfo.slave_chat_alias.is_null(False))).first()
+                        (SlaveChatInfo.slave_chat_alias.is_null(False))).first()
                 if not contact.slave_chat_alias:
                     return None
             # TODO cache
