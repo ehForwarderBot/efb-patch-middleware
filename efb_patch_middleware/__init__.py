@@ -1288,7 +1288,8 @@ class PatchMiddleware(Middleware):
         try:
             chat.mark_as_read()
         except wxpy.ResponseError as e:
-            self.logger.exception("[%s] Error occurred while marking chat as read. (%s)", msg.uid, e)
+            self.logger.exception(
+                "[%s] Error occurred while marking chat as read. (%s)", msg.uid, e)
 
         send_text_only = False
         self.logger.debug('[%s] Is edited: %s', msg.uid, msg.edit)
@@ -1304,7 +1305,8 @@ class PatchMiddleware(Middleware):
                     try:
                         ews_utils.message_id_to_dummy_message(i, self).recall()
                     except wxpy.ResponseError as e:
-                        self.logger.error("[%s] Trying to recall message but failed: %s", msg.uid, e)
+                        self.logger.error(
+                            "[%s] Trying to recall message but failed: %s", msg.uid, e)
                         failed += 1
                 if failed:
                     raise EFBMessageError(
@@ -1337,7 +1339,8 @@ class PatchMiddleware(Middleware):
                     tgt_alias = ""
                 msg.text = f"「{tgt_alias}{tgt_text}」\n- - - - - - - - - - - - - - -\n{msg.text}"
             r.append(self._bot_send_msg(chat, msg.text))
-            self.logger.debug('[%s] Sent as a text message. %s', msg.uid, msg.text)
+            self.logger.debug(
+                '[%s] Sent as a text message. %s', msg.uid, msg.text)
         elif msg.type in (MsgType.Image, MsgType.Sticker, MsgType.Animation):
             self.logger.info("[%s] Image/GIF/Sticker %s", msg.uid, msg.type)
 
@@ -1358,17 +1361,21 @@ class PatchMiddleware(Middleware):
                         img = Image.open(file)
                         try:
                             alpha = img.split()[3]
-                            mask = Image.eval(alpha, lambda a: 255 if a <= 128 else 0)
+                            mask = Image.eval(
+                                alpha, lambda a: 255 if a <= 128 else 0)
                         except IndexError:
                             mask = Image.eval(img.split()[0], lambda a: 0)
-                        img = img.convert('RGB').convert('P', palette=Image.ADAPTIVE, colors=255)
+                        img = img.convert('RGB').convert(
+                            'P', palette=Image.ADAPTIVE, colors=255)
                         img.paste(255, mask)
                         img.save(f, transparency=255)
                         msg.path = Path(f.name)
-                        self.logger.debug('[%s] Image converted from %s to GIF', msg.uid, msg.mime)
+                        self.logger.debug(
+                            '[%s] Image converted from %s to GIF', msg.uid, msg.mime)
                         file.close()
                         if f.seek(0, 2) > self.MAX_FILE_SIZE:
-                            raise EFBMessageError(self._("Image size is too large. (IS02)"))
+                            raise EFBMessageError(
+                                self._("Image size is too large. (IS02)"))
                         f.seek(0)
                         r.append(self._bot_send_image(chat, f.name, f))
                     finally:
@@ -1382,10 +1389,12 @@ class PatchMiddleware(Middleware):
                         out.paste(img, img)
                         out.convert('RGB').save(f)
                         msg.path = Path(f.name)
-                        self.logger.debug('[%s] Image converted from %s to JPEG', msg.uid, msg.mime)
+                        self.logger.debug(
+                            '[%s] Image converted from %s to JPEG', msg.uid, msg.mime)
                         file.close()
                         if f.seek(0, 2) > self.MAX_FILE_SIZE:
-                            raise EFBMessageError(self._("Image size is too large. (IS02)"))
+                            raise EFBMessageError(
+                                self._("Image size is too large. (IS02)"))
                         f.seek(0)
                         r.append(self._bot_send_image(chat, f.name, f))
                     finally:
@@ -1394,9 +1403,11 @@ class PatchMiddleware(Middleware):
             else:
                 try:
                     if file.seek(0, 2) > self.MAX_FILE_SIZE:
-                        raise EFBMessageError(self._("Image size is too large. (IS01)"))
+                        raise EFBMessageError(
+                            self._("Image size is too large. (IS01)"))
                     file.seek(0)
-                    self.logger.debug("[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
+                    self.logger.debug(
+                        "[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
                     filename = msg.filename or (msg.path and msg.path.name)
                     assert filename
                     r.append(self._bot_send_image(chat, filename, file))
@@ -1418,7 +1429,8 @@ class PatchMiddleware(Middleware):
             if not msg.file.closed:
                 msg.file.close()
         elif msg.type == MsgType.Video:
-            self.logger.info("[%s] Sending video to WeChat\nFileName: %s\nPath: %s", msg.uid, msg.text, msg.path)
+            self.logger.info(
+                "[%s] Sending video to WeChat\nFileName: %s\nPath: %s", msg.uid, msg.text, msg.path)
             filename = msg.filename or (msg.path and msg.path.name)
             assert filename and msg.file
             r.append(self._bot_send_video(chat, filename, file=msg.file))
@@ -1431,7 +1443,8 @@ class PatchMiddleware(Middleware):
             raise EFBMessageTypeNotSupported()
 
         msg.uid = ews_utils.generate_message_uid(r)
-        self.logger.debug('WeChat message is assigned with unique ID: %s', msg.uid)
+        self.logger.debug(
+            'WeChat message is assigned with unique ID: %s', msg.uid)
         return msg
 
     # efb_wechat_slave/vendor/wxpy/api/bot.py
