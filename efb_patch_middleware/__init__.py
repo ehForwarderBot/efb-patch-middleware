@@ -43,6 +43,7 @@ from efb_telegram_master.constants import Emoji
 from efb_telegram_master.message import ETMMsg
 from efb_telegram_master.msg_type import TGMsgType
 from efb_telegram_master.chat_destination_cache import ChatDestinationCache
+from efb_telegram_master.db import SlaveChatInfo
 
 
 from efb_wechat_slave import utils as ews_utils
@@ -248,6 +249,7 @@ class PatchMiddleware(Middleware):
             self.attach_target_message = self.master_messages.attach_target_message
             self.TYPE_DICT = self.master_messages.TYPE_DICT
 
+            self.db.get_slave_chat_contact_alias = self.get_slave_chat_contact_alias
             self.etm_master_messages_patch()
             self.etm_slave_messages_patch()
             self.etm_chat_binding_patch()
@@ -317,15 +319,14 @@ class PatchMiddleware(Middleware):
             return
         setattr(patch_base, patch_attr, f)
 
-
     def patch(self, func, patch_base, patch_attr, crc32: int):
         self.patch_check(func, crc32, patch_base, patch_attr)
 
     def etm_slave_messages_patch(self):
         self.patch(self.generate_message_template, self.slave_messages, "generate_message_template", 3121137375)
-        self.patch(self.slave_message_video, self.slave_messages, "slave_message_video", 241855262)
-        self.patch(self.slave_message_file, self.slave_messages, "slave_message_file", 2901539229)
-        self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 723145301)
+        self.patch(self.slave_message_video, self.slave_messages, "slave_message_video", 2210982730)
+        self.patch(self.slave_message_file, self.slave_messages, "slave_message_file", 1543019252)
+        self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 127956319)
         self.patch(self.get_slave_msg_dest, self.slave_messages, "get_slave_msg_dest", 3457314213)
 
 
@@ -333,7 +334,7 @@ class PatchMiddleware(Middleware):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
         self.patch(self.msg, self.master_messages, "msg", 3836143189)
-        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 972051836)
+        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 726222905)
 
         self.bot.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
         self.bot.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
@@ -448,6 +449,11 @@ class PatchMiddleware(Middleware):
         return msg_template
 
     def get_display_name(self, chat: Chat) -> str:
+        # 群成员昵称不存在时获取联系人昵称
+        if not chat.alias:
+            chat.alias = self.db.get_slave_chat_contact_alias(chat.uid)
+
+        # self.logger.log(99, "chat: [%s]", chat.__dict__)
         return chat.name if not chat.alias or chat.alias in chat.name \
             else (chat.alias if chat.name in chat.alias else f"{chat.alias} ({chat.name})")
 
@@ -1266,7 +1272,7 @@ class PatchMiddleware(Middleware):
         if msg.chat == self.user_auth_chat:
             raise EFBChatNotFound
 
-        chat: wxpy.Chat = self.chats.get_wxpy_chat_by_uid(msg.chat.id)
+        chat: wxpy.Chat = self.chats.get_wxpy_chat_by_uid(msg.chat.uid)
 
         # List of "SentMessage" response for all messages sent
         r: List[wxpy.SentMessage] = []
@@ -1277,7 +1283,7 @@ class PatchMiddleware(Middleware):
                          "Type: %s\n"
                          "Text: %s",
                          msg.uid,
-                         msg.chat.id, chat.user_name, chat.name, msg.type, msg.text)
+                         msg.chat.uid, chat.user_name, chat.name, msg.type, msg.text)
 
         try:
             chat.mark_as_read()
@@ -1469,3 +1475,23 @@ class PatchMiddleware(Middleware):
                 start_new_thread(process, use_caller_name=True)
             else:
                 process()
+
+    def get_slave_chat_contact_alias(self, slave_chat_uid: Optional[ChatID] = None) -> Optional[SlaveChatInfo]:
+        """
+        Get cached slave chat info from database.
+
+        Returns:
+            SlaveChatInfo|None: The matching slave chat info, None if not exist.
+        """
+        if slave_chat_uid is None:
+            raise None
+        try:
+            contact = SlaveChatInfo.select() \
+                .where((SlaveChatInfo.slave_chat_uid == slave_chat_uid) &
+                       (SlaveChatInfo.slave_chat_group_id.is_null(True))).first()
+            if not contact.slave_chat_alias:
+                return None
+            # TODO cache
+            return contact.slave_chat_alias
+        except DoesNotExist:
+            return None

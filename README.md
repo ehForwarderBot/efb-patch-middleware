@@ -17,9 +17,9 @@ Patches to enhance EFB functionality
 ### compatible version
 
 ```text
-EFB 2.0.0b24
-ETM 2.0.0b37
-EWS 2.0.0a37
+EFB 2.0.0
+ETM 2.0.1
+EWS 2.0.0
 ```
 
 ### Usage
