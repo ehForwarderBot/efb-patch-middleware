@@ -1551,7 +1551,7 @@ class PatchMiddleware(Middleware):
             if not contact.slave_chat_alias:
                 contact = SlaveChatInfo.select() \
                     .where((SlaveChatInfo.slave_chat_uid == slave_chat_uid) &
-                        (SlaveChatInfo.slave_chat_alias.is_null(False))).first()
+                           (SlaveChatInfo.slave_chat_alias.is_null(False))).first()
                 if not contact.slave_chat_alias:
                     return None
             # TODO cache
