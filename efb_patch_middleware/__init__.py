@@ -7,6 +7,7 @@ import time
 import sched
 import logging
 import telegram
+import itertools
 
 import binascii
 import functools
@@ -26,22 +27,21 @@ from telegram.ext import CallbackContext, Filters, MessageHandler, CommandHandle
 from telegram.error import BadRequest
 from telegram.utils.helpers import escape_markdown
 
-from ehforwarderbot import Middleware, Message, \
-    coordinator, Channel, utils as efb_utils
+from ehforwarderbot import Middleware, Message, Status, coordinator, Channel, utils as efb_utils
 from ehforwarderbot.constants import MsgType
 from ehforwarderbot.chat import ChatNotificationState, SelfChatMember, GroupChat, PrivateChat, SystemChat, Chat, SystemChatMember
 from ehforwarderbot.exceptions import EFBChatNotFound, EFBOperationNotSupported, EFBMessageTypeNotSupported, \
     EFBMessageNotFound, EFBMessageError, EFBException
 from ehforwarderbot.types import ModuleID, ChatID, MessageID
 from ehforwarderbot.message import LocationAttribute
-from ehforwarderbot.status import MessageRemoval
+from ehforwarderbot.status import ChatUpdates, MemberUpdates, MessageRemoval, MessageReactionsUpdate
 
 from efb_telegram_master import utils
 from efb_telegram_master.utils import TelegramMessageID, TelegramChatID, EFBChannelChatIDStr, TgChatMsgIDStr
 from efb_telegram_master.chat import convert_chat, ETMGroupChat
 from efb_telegram_master.constants import Emoji
 from efb_telegram_master.message import ETMMsg
-from efb_telegram_master.msg_type import TGMsgType
+from efb_telegram_master.msg_type import TGMsgType, get_msg_type
 from efb_telegram_master.chat_destination_cache import ChatDestinationCache
 from efb_telegram_master.db import SlaveChatInfo
 
@@ -282,7 +282,7 @@ class PatchMiddleware(Middleware):
 
         if len(patch_result) > 0:
             self.logger.log(99, "patch result: [%s]", patch_result)
-            self.bot.send_message(self.channel.config['admins'][0], '中间件[PatchMiddleware]匹配校验失败，请检查版本')
+            self.bot.send_message(self.channel.config['admins'][0], f"中间件[PatchMiddleware {self.__version__}]匹配校验失败，请核查版本")
         # self.logger.log(99, "[%s] init...", self.middleware_name)
 
     def load_config(self):
@@ -293,6 +293,7 @@ class PatchMiddleware(Middleware):
         """
         self.AUTO_MARK_AS_READ = True
         self.REMOVE_EMOJI_IN_TITLE = True
+        self.STRIKETHROUGH_RECALL_MSG = True
         config_path = efb_utils.get_config_path(self.middleware_id)
         if not config_path.exists():
             return
@@ -302,6 +303,7 @@ class PatchMiddleware(Middleware):
 
             self.AUTO_MARK_AS_READ = data.get("auto_mark_as_read", True)
             self.REMOVE_EMOJI_IN_TITLE = data.get("remove_emoji_in_title", True)
+            self.STRIKETHROUGH_RECALL_MSG = data.get("strikethrough_recall_msg", True)
 
     def patch_check(self, f: Callable, crc32: int, patch_base: Union[ModuleType, Type], patch_attr: str):
         """检查并覆盖指定的函数。
@@ -316,7 +318,7 @@ class PatchMiddleware(Middleware):
         patch_source = getattr(patch_base, patch_attr)
         base_crc32 = binascii.crc32(inspect.getsource(patch_source).encode())
         if base_crc32 != crc32:
-            patch_result.append(f"{patch_attr} CRC32值不匹配，指定的值为{crc32}，实际值为{base_crc32}。")
+            patch_result.append(f"{patch_attr} CRC32值不匹配，指定的值为 {crc32} ，实际值为 {base_crc32} 。")
             return
         setattr(patch_base, patch_attr, f)
 
@@ -330,12 +332,14 @@ class PatchMiddleware(Middleware):
         self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 127956319)
         self.patch(self.get_slave_msg_dest, self.slave_messages, "get_slave_msg_dest", 3457314213)
 
+        if self.STRIKETHROUGH_RECALL_MSG:
+            self.patch(self.send_status, self.slave_messages, "send_status", 2934172964)
 
     def etm_master_messages_patch(self):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
         self.patch(self.msg, self.master_messages, "msg", 3836143189)
-        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 726222905)
+        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 965694386)
 
         self.bot.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
         self.bot.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
@@ -437,7 +441,7 @@ class PatchMiddleware(Middleware):
             emoji_prefix = msg.chat.channel_emoji + Emoji.GROUP
             ### patch modified 👇 ###
             name_prefix = self.get_display_name(msg.chat)
-            msg_template = f"{emoji_prefix} {msg_prefix} [{name_prefix}]:"
+            msg_template = f"{emoji_prefix} {msg_prefix} [#{name_prefix}]:"
         elif isinstance(msg.chat, SystemChat):
             emoji_prefix = msg.chat.channel_emoji + Emoji.SYSTEM
             ### patch modified 👇 ###
@@ -446,7 +450,8 @@ class PatchMiddleware(Middleware):
                 name_prefix += f", {self.get_display_name(msg.author)}"
             msg_template = f"{emoji_prefix} {name_prefix}:"
         else:
-            msg_template = f"{Emoji.UNKNOWN} {msg.author.long_name} ({msg.chat.display_name}):"
+            ### patch modified 👇 ###
+            msg_template = f"{Emoji.UNKNOWN} {self.get_display_name(msg.author)} ({msg.chat.display_name}):"
         return msg_template
 
     def get_display_name(self, chat: Chat) -> str:
@@ -688,6 +693,7 @@ class PatchMiddleware(Middleware):
         xid = msg.uid
         msg.chat = self.chat_manager.update_chat_obj(msg.chat)
         msg.author = self.chat_manager.get_or_enrol_member(msg.chat, msg.author)
+
         chat_uid = utils.chat_id_to_str(chat=msg.chat)
         tg_chats = self.db.get_chat_assoc(slave_uid=chat_uid)
         tg_chat = None
@@ -752,6 +758,73 @@ class PatchMiddleware(Middleware):
             self.chat_dest_cache.remove(tg_dest)
 
         return msg_template, tg_dest
+
+    # efb_telegram_master/slave_message.py
+    def send_status(self, status: Status):
+        if isinstance(status, ChatUpdates):
+            self.logger.debug("Received chat updates from channel %s", status.channel)
+            for i in status.removed_chats:
+                self.db.delete_slave_chat_info(status.channel.channel_id, i)
+                self.chat_manager.delete_chat_object(status.channel.channel_id, i)
+            for i in itertools.chain(status.new_chats, status.modified_chats):
+                chat = status.channel.get_chat(i)
+                self.chat_manager.update_chat_obj(chat, full_update=True)
+        elif isinstance(status, MemberUpdates):
+            self.logger.debug("Received member updates from channel %s about group %s",
+                              status.channel, status.chat_id)
+            for i in status.removed_members:
+                self.db.delete_slave_chat_info(status.channel.channel_id, i, status.chat_id)
+            self.chat_manager.delete_chat_members(status.channel.channel_id, status.chat_id, status.removed_members)
+            chat = status.channel.get_chat(status.chat_id)
+            self.chat_manager.update_chat_obj(chat, full_update=True)
+        elif isinstance(status, MessageRemoval):
+            self.logger.debug("Received message removal request from channel %s on message %s",
+                              status.source_channel, status.message)
+            old_msg = self.db.get_msg_log(
+                slave_msg_id=status.message.uid,
+                slave_origin_uid=utils.chat_id_to_str(chat=status.message.chat))
+            if old_msg:
+                old_msg_id: OldMsgID = utils.message_id_str_to_id(old_msg.master_msg_id)
+                self.logger.debug("Found message to delete in Telegram: %s.%s",
+                                  *old_msg_id)
+                try:
+                    if not self.channel.flag('prevent_message_removal'):
+                        self.bot.delete_message(*old_msg_id)
+                        return
+                except telegram.TelegramError:
+                    pass
+                ### patch modified start 👇 ###
+                if old_msg.media_type in ('Text', 'Photo', 'Document'):
+                    channel_id, chat_uid, group_id = utils.chat_id_str_to_id(old_msg.slave_member_uid)
+                    text = old_msg.text
+                    if chat_uid != group_id:
+                        text = f"{self.db.get_slave_chat_contact_alias(chat_uid)}:\n" + text
+                    elif not text:
+                        text = 'deleted'
+                    text = self.escape_markdown2(text + ' [❌]')
+                    if old_msg.media_type == 'Text':
+                        self.bot.edit_message_text(chat_id=old_msg_id[0],
+                                        text=f"~{text}~",
+                                        message_id=old_msg_id[1],
+                                        parse_mode="MarkdownV2")
+                    else:
+                        self.bot.edit_message_caption(chat_id=old_msg_id[0],
+                                        caption=f"~{text}~",
+                                        message_id=old_msg_id[1],
+                                        parse_mode="MarkdownV2")
+                else:
+                ### patch modified end 👆 ###
+                    self.bot.send_message(chat_id=old_msg_id[0],
+                                      text=self._("Message is removed in remote chat."),
+                                      reply_to_message_id=old_msg_id[1])
+            else:
+                self.logger.info('Was supposed to delete a message, '
+                                 'but it does not exist in database: %s', status)
+        elif isinstance(status, MessageReactionsUpdate):
+            self.update_reactions(status)
+        else:
+            self.logger.error('Received an unsupported type of status: %s', status)
+
 
     # efb_telegram_master/chat_binding.py
     def update_group_info(self, update: Update, context: CallbackContext):
@@ -1049,8 +1122,19 @@ class PatchMiddleware(Middleware):
         log_message = True
         try:
             m.uid = MessageID(message_id)
+            # Store Telegram message type
+            m.type_telegram = mtype = get_msg_type(message)
+
+            if self.TYPE_DICT.get(mtype, None):
+                m.type = self.TYPE_DICT[mtype]
+                self.logger.debug("[%s] EFB message type: %s", message_id, mtype)
+            else:
+                self.logger.info("[%s] Message type %s is not supported by ETM", message_id, mtype)
+                raise EFBMessageTypeNotSupported(
+                    self._("{type_name} messages are not supported by EFB Telegram Master channel.")
+                        .format(type_name=mtype.name))
+
             m.put_telegram_file(message)
-            mtype = m.type_telegram
             # Chat and author related stuff
             m.chat = self.chat_manager.get_chat(channel, uid, build_dummy=True)
             m.author = m.chat.self or m.chat.add_self()
@@ -1063,15 +1147,6 @@ class PatchMiddleware(Middleware):
                 self.attach_target_message(message, m, channel)
             # Type specific stuff
             self.logger.debug("[%s] Message type from Telegram: %s", message_id, mtype)
-
-            if self.TYPE_DICT.get(mtype, None):
-                m.type = self.TYPE_DICT[mtype]
-                self.logger.debug("[%s] EFB message type: %s", message_id, mtype)
-            else:
-                self.logger.info("[%s] Message type %s is not supported by ETM", message_id, mtype)
-                raise EFBMessageTypeNotSupported(
-                    self._("{type_name} messages are not supported by EFB Telegram Master channel.")
-                        .format(type_name=mtype.name))
 
             if m.type not in coordinator.slaves[channel].supported_message_types:
                 self.logger.info("[%s] Message type %s is not supported by channel %s",
@@ -1234,6 +1309,7 @@ class PatchMiddleware(Middleware):
                 self.db.add_or_update_message_log(m, update.effective_message)
                 if m.file:
                     m.file.close()
+
 
     # efb_wechat_slave/slave_message.py
     def wechat_sharing_msg(self, msg: wxpy.Message):
@@ -1535,6 +1611,7 @@ class PatchMiddleware(Middleware):
             else:
                 process()
 
+
     def get_slave_chat_contact_alias(self, slave_chat_uid: Optional[ChatID] = None) -> Optional[SlaveChatInfo]:
         """
         Get cached slave chat info from database.
@@ -1544,6 +1621,8 @@ class PatchMiddleware(Middleware):
         """
         if slave_chat_uid is None:
             raise None
+        if slave_chat_uid == '__self__':
+            return 'You'
         try:
             contact = SlaveChatInfo.select() \
                 .where((SlaveChatInfo.slave_chat_uid == slave_chat_uid) &
@@ -1558,3 +1637,9 @@ class PatchMiddleware(Middleware):
             return contact.slave_chat_alias
         except DoesNotExist:
             return None
+
+    @staticmethod
+    def escape_markdown2(text):
+        """Helper function to escape telegram markup symbols."""
+        escape_chars = '_\*\[\]\(\)~`>#\+\-=\|\{\}\.\!'
+        return re.sub(r'([%s])' % escape_chars, r'\\\1', text)
