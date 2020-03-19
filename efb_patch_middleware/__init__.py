@@ -267,6 +267,7 @@ class PatchMiddleware(Middleware):
             self._bot_send_image = self.channel_ews._bot_send_image
             self._bot_send_video = self.channel_ews._bot_send_video
             self.MAX_FILE_SIZE = self.channel_ews.MAX_FILE_SIZE
+            self.self.MEDIA_MSG_TYPES = self.channel_ews.self.MEDIA_MSG_TYPES
 
             self.wechat_unsupported_msg = self.channel_ews.slave_message.wechat_unsupported_msg
             self.wechat_shared_image_msg = self.channel_ews.slave_message.wechat_shared_image_msg
