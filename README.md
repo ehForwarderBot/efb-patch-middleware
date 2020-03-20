@@ -41,6 +41,7 @@ file path `~/.ehforwarderbot/profiles/default/patch.PatchMiddleware/config.yaml`
 ```yaml
 auto_mark_as_read: True # auto mark as read in wechat phone client
 remove_emoji_in_title: True # wouldn't remove emoji in telegram group title if this is set False
+strikethrough_recall_msg: True # strikethrough instead of replying to a recall message
 ```
 
 ### Installation
