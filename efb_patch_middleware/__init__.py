@@ -371,6 +371,10 @@ class PatchMiddleware(Middleware):
             return False
 
         message = update.message or update.edited_message
+        if not message:
+            if update.channel_post and update.channel_post.reply_to_message:
+                return False
+            return True
         user = self.updater.bot.getChatMember(message.chat.id, update.effective_user.id, 5)
 
         # message.text = f"[{message.from_user.username or message.from_user.first_name}]: {message.text}"
@@ -795,15 +799,17 @@ class PatchMiddleware(Middleware):
                 except telegram.TelegramError:
                     pass
                 ### patch modified start 👇 ###
-                if old_msg.media_type in ('Text', 'Photo', 'Document'):
-                    channel_id, chat_uid, group_id = utils.chat_id_str_to_id(old_msg.slave_member_uid)
+                if old_msg.msg_type in ('Text', 'Image', 'File'):
+                    # self.logger.log(99, 'old_msg.msg_type: %s', old_msg.msg_type)
+                    a_module, a_id, a_grp = utils.chat_id_str_to_id(old_msg.slave_member_uid)
+                    author = self.chat_manager.get_chat_member(a_module, a_grp, a_id)
                     text = old_msg.text
-                    if chat_uid != group_id:
-                        text = f"{self.db.get_slave_chat_contact_alias(chat_uid)}:\n" + text
+                    if a_id != a_grp:
+                        text = f"{self.get_display_name(author)}:\n" + text
                     elif not text:
                         text = 'deleted'
                     text = self.escape_markdown2(text + ' [❌]')
-                    if old_msg.media_type == 'Text':
+                    if old_msg.msg_type == 'Text':
                         self.bot.edit_message_text(chat_id=old_msg_id[0],
                                         text=f"~{text}~",
                                         message_id=old_msg_id[1],
@@ -1081,7 +1087,7 @@ class PatchMiddleware(Middleware):
                         destination = f"blueset.wechat {relate_chat.puid}"
                         return self.process_telegram_message(update, context, destination, quote=quote)
                     except ValueError:
-                        self.logger.log("guess destination chat failed.")
+                        self.logger.log(99, "guess destination chat failed.")
                     except Exception:
                         self.logger.exception('guess destination chat error.')
                 ### patch modified end 👆 ###
@@ -1198,7 +1204,7 @@ class PatchMiddleware(Middleware):
 
             ### patch modified start 👇 ###
             # 以rm开头回复来撤回自己发送的消息
-            if message.reply_to_message and message.reply_to_message.from_user.id == message.from_user.id and msg_md_text.startswith(self.DELETE_FLAG):
+            if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == message.from_user.id and msg_md_text.startswith(self.DELETE_FLAG):
                 m.edit = True
                 m.edit_media = True
                 msg_log = self.db.get_msg_log(master_msg_id=utils.message_id_to_str(
