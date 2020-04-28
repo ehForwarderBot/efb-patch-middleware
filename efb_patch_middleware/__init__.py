@@ -340,7 +340,7 @@ class PatchMiddleware(Middleware):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
         self.patch(self.msg, self.master_messages, "msg", 3836143189)
-        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 965694386)
+        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 1083193697)
 
         self.bot.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
         self.bot.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
