@@ -441,7 +441,7 @@ class PatchMiddleware(Middleware):
             if msg.chat.other != msg.author:
                 ### patch modified 👇 ###
                 name_prefix += f", {self.get_display_name(msg.author)}"
-            msg_template = f"{emoji_prefix} {name_prefix}:"
+            msg_template = f"{emoji_prefix} #{name_prefix}:"
         elif isinstance(msg.chat, GroupChat):
             emoji_prefix = msg.chat.channel_emoji + Emoji.GROUP
             ### patch modified 👇 ###
@@ -453,7 +453,7 @@ class PatchMiddleware(Middleware):
             name_prefix = self.get_display_name(msg.chat)
             if msg.chat.other != msg.author:
                 name_prefix += f", {self.get_display_name(msg.author)}"
-            msg_template = f"{emoji_prefix} {name_prefix}:"
+            msg_template = f"{emoji_prefix} #{name_prefix}:"
         else:
             ### patch modified 👇 ###
             msg_template = f"{Emoji.UNKNOWN} {self.get_display_name(msg.author)} ({msg.chat.display_name}):"
@@ -462,7 +462,14 @@ class PatchMiddleware(Middleware):
     def get_display_name(self, chat: Chat) -> str:
         # 群成员昵称不存在时获取联系人昵称
         if not chat.alias:
+            # self.logger.log(99, 'get display_name %s', chat.__dict__)
+            cache = self.chat_manager.get_chat(chat.module_id, chat.uid)
+            if not cache:
+                # self.logger.log(99, 'no cache: %s', chat.uid)
             chat.alias = self.db.get_slave_chat_contact_alias(chat.uid)
+            else:
+                # self.logger.log(99, 'get cache %s', cache.__dict__)
+                chat.alias = cache.alias
 
         # self.logger.log(99, "chat: [%s]", chat.__dict__)
         return chat.name if not chat.alias or chat.alias in chat.name \
