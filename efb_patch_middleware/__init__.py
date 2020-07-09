@@ -328,9 +328,9 @@ class PatchMiddleware(Middleware):
 
     def etm_slave_messages_patch(self):
         self.patch(self.generate_message_template, self.slave_messages, "generate_message_template", 3121137375)
-        self.patch(self.slave_message_video, self.slave_messages, "slave_message_video", 2210982730)
-        self.patch(self.slave_message_file, self.slave_messages, "slave_message_file", 1543019252)
-        self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 127956319)
+        self.patch(self.slave_message_video, self.slave_messages, "slave_message_video", 2570779611)
+        self.patch(self.slave_message_file, self.slave_messages, "slave_message_file", 134161509)
+        self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 912391372)
         self.patch(self.get_slave_msg_dest, self.slave_messages, "get_slave_msg_dest", 3457314213)
 
         if self.STRIKETHROUGH_RECALL_MSG:
@@ -339,8 +339,8 @@ class PatchMiddleware(Middleware):
     def etm_master_messages_patch(self):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
-        self.patch(self.msg, self.master_messages, "msg", 3836143189)
-        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 1083193697)
+        self.patch(self.msg, self.master_messages, "msg", 635266065)
+        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 1169581507)
 
         self.bot.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
         self.bot.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
@@ -466,7 +466,7 @@ class PatchMiddleware(Middleware):
             cache = self.chat_manager.get_chat(chat.module_id, chat.uid)
             if not cache:
                 # self.logger.log(99, 'no cache: %s', chat.uid)
-            chat.alias = self.db.get_slave_chat_contact_alias(chat.uid)
+                chat.alias = self.db.get_slave_chat_contact_alias(chat.uid)
             else:
                 # self.logger.log(99, 'get cache %s', cache.__dict__)
                 chat.alias = cache.alias
@@ -1046,8 +1046,22 @@ class PatchMiddleware(Middleware):
 
         self.logger.debug("[%s] Received message from Telegram: %s", mid, message.to_dict())
 
-        # if the chat is singly-linked
-        destination = self.get_singly_linked_chat_id_str(update.effective_chat)
+        destination = None
+        edited = None
+
+        if update.edited_message or update.edited_channel_post:
+            self.logger.debug('[%s] Message is edited: %s', mid, message.edit_date)
+            msg_log = self.db.get_msg_log(master_msg_id=utils.message_id_to_str(update=update))
+            if not msg_log or msg_log.slave_message_id == self.db.FAIL_FLAG:
+                message.reply_text(self._("Error: This message cannot be edited, and thus is not sent. (ME01)"), quote=True)
+                return
+            destination = msg_log.slave_origin_uid
+            edited = msg_log
+
+        if destination is None:
+            # if the chat is singly-linked
+            destination = self.get_singly_linked_chat_id_str(update.effective_chat)
+
         if destination is None:  # not singly linked
             quote = False
             self.logger.debug("[%s] Chat %s is not singly-linked", mid, update.effective_chat)
@@ -1102,11 +1116,12 @@ class PatchMiddleware(Middleware):
                 message.reply_text(self._("Error: No recipient specified.\n"
                                           "Please reply to a previous message. (MS02)"), quote=True)
         else:
-            return self.process_telegram_message(update, context, destination, quote=quote)
+            return self.process_telegram_message(update, context, destination, quote=quote, edited=edited)
 
     # efb_telegram_master/master_message.py
     def process_telegram_message(self, update: Update, context: CallbackContext,
-                                 destination: EFBChannelChatIDStr, quote: bool = False):
+                                 destination: EFBChannelChatIDStr, quote: bool = False,
+                                 edited: Optional["MsgLog"] = None):
         """
         Process messages came from Telegram.
 
@@ -1115,6 +1130,7 @@ class PatchMiddleware(Middleware):
             context: PTB update context
             destination: Destination of the message specified.
             quote: If the message shall quote another one
+            edited: old message log entry if the message can be edited.
         """
 
         # Message ID for logging
@@ -1122,10 +1138,6 @@ class PatchMiddleware(Middleware):
 
         ### patch modified 👇 ###
         message: telegram.Message = update.effective_message
-
-        edited = bool(update.edited_message or update.edited_channel_post)
-        self.logger.debug('[%s] Message is edited: %s, %s',
-                          message_id, edited, message.edit_date)
 
         channel, uid, gid = utils.chat_id_str_to_id(destination)
         if channel not in coordinator.slaves:
@@ -1185,10 +1197,8 @@ class PatchMiddleware(Middleware):
             if edited:
                 m.edit = True
                 text = msg_md_text or msg_md_caption
-                msg_log = self.db.get_msg_log(master_msg_id=utils.message_id_to_str(update=update))
-                if not msg_log or msg_log.slave_message_id == self.db.FAIL_FLAG:
-                    raise EFBMessageNotFound()
-                m.uid = msg_log.slave_message_id
+
+                m.uid = edited.slave_message_id
                 if text.startswith(self.DELETE_FLAG):
                     coordinator.send_status(MessageRemoval(
                         source_channel=self.channel,
@@ -1205,8 +1215,8 @@ class PatchMiddleware(Middleware):
                     log_message = False
                     return
                 self.logger.debug('[%s] Message is edited (%s)', m.uid, m.edit)
-                if m.file_unique_id and m.file_unique_id != msg_log.file_unique_id:
-                    self.logger.debug("[%s] Message media is edited (%s -> %s)", m.uid, msg_log.file_unique_id, m.file_unique_id)
+                if m.file_unique_id and m.file_unique_id != edited.file_unique_id:
+                    self.logger.debug("[%s] Message media is edited (%s -> %s)", m.uid, edited.file_unique_id, m.file_unique_id)
                     m.edit_media = True
 
             ### patch modified start 👇 ###
@@ -1297,6 +1307,8 @@ class PatchMiddleware(Middleware):
                 m.text = self._("Shared a contact: {first_name} {last_name}\n{phone_number}").format(
                     first_name=contact.first_name, last_name=contact.last_name, phone_number=contact.phone_number
                 )
+            elif mtype is TGMsgType.Dice:
+                m.text = f"{message.dice.emoji} = {message.dice.value}"
             else:
                 raise EFBMessageTypeNotSupported(self._("Message type {0} is not supported.").format(mtype.name))
 
