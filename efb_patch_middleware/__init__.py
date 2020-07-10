@@ -294,7 +294,7 @@ class PatchMiddleware(Middleware):
         """
         self.AUTO_MARK_AS_READ = True
         self.REMOVE_EMOJI_IN_TITLE = True
-        self.STRIKETHROUGH_RECALL_MSG = True
+        self.STRIKETHROUGH_RECALL_MSG = False
         config_path = efb_utils.get_config_path(self.middleware_id)
         if not config_path.exists():
             return
@@ -304,7 +304,7 @@ class PatchMiddleware(Middleware):
 
             self.AUTO_MARK_AS_READ = data.get("auto_mark_as_read", True)
             self.REMOVE_EMOJI_IN_TITLE = data.get("remove_emoji_in_title", True)
-            self.STRIKETHROUGH_RECALL_MSG = data.get("strikethrough_recall_msg", True)
+            self.STRIKETHROUGH_RECALL_MSG = data.get("strikethrough_recall_msg", False)
 
     def patch_check(self, f: Callable, crc32: int, patch_base: Union[ModuleType, Type], patch_attr: str):
         """检查并覆盖指定的函数。
@@ -334,7 +334,7 @@ class PatchMiddleware(Middleware):
         self.patch(self.get_slave_msg_dest, self.slave_messages, "get_slave_msg_dest", 3457314213)
 
         if self.STRIKETHROUGH_RECALL_MSG:
-            self.patch(self.send_status, self.slave_messages, "send_status", 2934172964)
+            self.patch(self.send_status, self.slave_messages, "send_status", 2710203104)
 
     def etm_master_messages_patch(self):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
@@ -815,7 +815,7 @@ class PatchMiddleware(Middleware):
                         text = f"{self.get_display_name(author)}:\n" + text
                     elif not text:
                         text = 'deleted'
-                    text = self.escape_markdown2(text + ' [❌]')
+                    text = self.escape_markdown2(text)  #  + ' [❌]'
                     if old_msg.msg_type == 'Text':
                         self.bot.edit_message_text(chat_id=old_msg_id[0],
                                         text=f"~{text}~",
