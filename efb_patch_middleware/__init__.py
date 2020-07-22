@@ -812,7 +812,9 @@ class PatchMiddleware(Middleware):
                     author = self.chat_manager.get_chat_member(a_module, a_grp, a_id)
                     text = old_msg.text
                     if a_id != a_grp:
-                        text = f"{self.get_display_name(author)}:\n" + text
+                        status.message.author = author
+                        message_template = self.generate_message_template(status.message, str(self.channel.config['admins'][0]) != old_msg_id[0])
+                        text = f"{message_template}\n" + text
                     elif not text:
                         text = 'deleted'
                     text = self.escape_markdown2(text)  #  + ' [❌]'
