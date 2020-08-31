@@ -18,7 +18,7 @@ Patches to enhance EFB functionality
 
 ```text
 EFB 2.0.0
-ETM 2.0.4
+ETM 2.2.0
 EWS 2.0.2
 ```
 

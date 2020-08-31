@@ -22,7 +22,7 @@ from xml.etree import ElementTree as ETree
 from xml.etree.ElementTree import Element
 
 from typing import Tuple, Optional, List, overload, Callable, Sequence, Any, Dict, IO, Type, Union
-from telegram import Update, TelegramError, InputMediaPhoto, InputMediaDocument, InputMediaVideo
+from telegram import ChatAction, Update, TelegramError, InputMediaPhoto, InputMediaDocument, InputMediaVideo, ReplyMarkup
 from telegram.ext import CallbackContext, Filters, MessageHandler, CommandHandler
 from telegram.error import BadRequest
 from telegram.utils.helpers import escape_markdown
@@ -328,9 +328,7 @@ class PatchMiddleware(Middleware):
 
     def etm_slave_messages_patch(self):
         self.patch(self.generate_message_template, self.slave_messages, "generate_message_template", 3121137375)
-        self.patch(self.slave_message_video, self.slave_messages, "slave_message_video", 2570779611)
-        self.patch(self.slave_message_file, self.slave_messages, "slave_message_file", 134161509)
-        self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 912391372)
+        # self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 1179016156)
         self.patch(self.get_slave_msg_dest, self.slave_messages, "get_slave_msg_dest", 3457314213)
 
         if self.STRIKETHROUGH_RECALL_MSG:
@@ -476,123 +474,13 @@ class PatchMiddleware(Middleware):
             else (chat.alias if chat.name in chat.alias else f"{chat.alias} ({chat.name})")
 
     # efb_telegram_master/slave_message.py
-    def slave_message_video(self, msg: Message, tg_dest: TelegramChatID, msg_template: str, reactions: str,
-                            old_msg_id: OldMsgID = None,
-                            target_msg_id: Optional[TelegramMessageID] = None,
-                            reply_markup: Optional[telegram.ReplyMarkup] = None,
-                            silent: bool = False) -> telegram.Message:
-        self.bot.send_chat_action(tg_dest, telegram.ChatAction.UPLOAD_VIDEO)
-        ### patch modified start 👇 ###
-        if msg.text:
-            text = self.html_substitutions(msg)
-        # elif msg_template:
-        #     text = "🎥"
-        else:
-            text = ""
-        ### patch modified end 👆 ###
-        try:
-            file_too_large = self.check_file_size(msg.file)
-            edit_media = msg.edit_media
-            if file_too_large:
-                if old_msg_id:
-                    if msg.edit_media:
-                        edit_media = False
-                    self.bot.send_message(chat_id=old_msg_id[0], reply_to_message_id=old_msg_id[1], text=file_too_large)
-                else:
-                    message = self.bot.send_message(chat_id=tg_dest, reply_to_message_id=target_msg_id, text=text,
-                                                    parse_mode="HTML", reply_markup=reply_markup,
-                                                    disable_notification=silent,
-                                                    prefix=msg_template, suffix=reactions)
-                    message.reply_text(file_too_large)
-                    return message
-
-            if old_msg_id:
-                if edit_media:
-                    assert msg.file is not None
-                    self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=InputMediaVideo(msg.file))
-                return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1], reply_markup=reply_markup,
-                                                     prefix=msg_template, suffix=reactions, caption=text, parse_mode="HTML")
-            assert msg.file is not None
-            return self.bot.send_video(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
-                                       caption=text, parse_mode="HTML",
-                                       reply_to_message_id=target_msg_id,
-                                       reply_markup=reply_markup,
-                                       disable_notification=silent)
-        finally:
-            if msg.file is not None:
-                msg.file.close()
-
-    # efb_telegram_master/slave_message.py
-    def slave_message_file(self, msg: Message, tg_dest: TelegramChatID, msg_template: str, reactions: str,
-                           old_msg_id: OldMsgID = None,
-                           target_msg_id: Optional[TelegramMessageID] = None,
-                           reply_markup: Optional[telegram.ReplyMarkup] = None,
-                           silent: bool = False) -> telegram.Message:
-        self.bot.send_chat_action(tg_dest, telegram.ChatAction.UPLOAD_DOCUMENT)
-
-        if msg.filename is None and msg.path is not None:
-            file_name = os.path.basename(msg.path)
-        else:
-            assert msg.filename is not None  # mypy compliance
-            file_name = msg.filename
-
-        # Telegram Bot API drops everything after `;` in filenames
-        # Replace it with a space
-        # Note: it also seems to strip off a lot of unicode punctuations
-        file_name = file_name.replace(';', ' ')
-
-        ### patch modified start 👇 ###
-        if msg.text:
-            text = self.html_substitutions(msg)
-        # elif msg_template:
-        #     text = "📄"
-        else:
-            text = ""
-        ### patch modified end 👆 ###
-
-        try:
-            file_too_large = self.check_file_size(msg.file)
-            edit_media = msg.edit_media
-            if file_too_large:
-                if old_msg_id:
-                    if msg.edit_media:
-                        edit_media = False
-                    self.bot.send_message(chat_id=old_msg_id[0], reply_to_message_id=old_msg_id[1], text=file_too_large)
-                else:
-                    message = self.bot.send_message(chat_id=tg_dest, reply_to_message_id=target_msg_id, text=text,
-                                                    parse_mode="HTML", reply_markup=reply_markup,
-                                                    disable_notification=silent,
-                                                    prefix=msg_template, suffix=reactions)
-                    message.reply_text(file_too_large)
-                    return message
-
-            if old_msg_id:
-                if edit_media:
-                    assert msg.file is not None
-                    self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=InputMediaDocument(msg.file))
-                return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1], reply_markup=reply_markup,
-                                                     prefix=msg_template, suffix=reactions, caption=text, parse_mode="HTML")
-            assert msg.file is not None
-            self.logger.debug("[%s] Uploading file %s (%s) as %s", msg.uid,
-                              msg.file.name, msg.mime, file_name)
-            return self.bot.send_document(tg_dest, msg.file,
-                                          prefix=msg_template, suffix=reactions,
-                                          caption=text, parse_mode="HTML", filename=file_name,
-                                          reply_to_message_id=target_msg_id,
-                                          reply_markup=reply_markup,
-                                          disable_notification=silent)
-        finally:
-            if msg.file is not None:
-                msg.file.close()
-
-    # efb_telegram_master/slave_message.py
     def slave_message_image(self, msg: Message, tg_dest: TelegramChatID, msg_template: str, reactions: str,
                             old_msg_id: OldMsgID = None,
                             target_msg_id: Optional[TelegramMessageID] = None,
-                            reply_markup: Optional[telegram.ReplyMarkup] = None,
+                            reply_markup: Optional[ReplyMarkup] = None,
                             silent: bool = False) -> telegram.Message:
         assert msg.file
-        self.bot.send_chat_action(tg_dest, telegram.ChatAction.UPLOAD_PHOTO)
+        self.bot.send_chat_action(tg_dest, ChatAction.UPLOAD_PHOTO)
         self.logger.debug("[%s] Message is of %s type; Path: %s; MIME: %s", msg.uid, msg.type, msg.path, msg.mime)
         if msg.path:
             self.logger.debug("[%s] Size of %s is %s.", msg.uid, msg.path, os.stat(msg.path).st_size)
@@ -600,8 +488,14 @@ class PatchMiddleware(Middleware):
         ### patch modified start 👇 ###
         if msg.text:
             text = self.html_substitutions(msg)
-        # elif msg_template:
-        #     text = "🖼️"
+        elif msg_template:
+            placeholder_flag = self.flag("default_media_prompt")
+            if placeholder_flag == "emoji":
+                text = "🖼️"
+            elif placeholder_flag == "text":
+                text = self._("Sent a picture.")
+            else:
+                text = ""
         else:
             text = ""
         ### patch modified end 👆 ###
