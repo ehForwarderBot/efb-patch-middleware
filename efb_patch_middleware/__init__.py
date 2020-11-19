@@ -334,14 +334,27 @@ class PatchMiddleware(Middleware):
         if self.STRIKETHROUGH_RECALL_MSG:
             self.patch(self.send_status, self.slave_messages, "send_status", 2710203104)
 
+    def sort_handler(self, handler):
+        # 权限校验
+        if isinstance(handler, MessageHandler) and handler.callback.__name__ == '<lambda>':
+            return 0
+
+        # 指令
+        if isinstance(handler, CommandHandler) and handler.command :
+            return 1
+
+        return 2
+
     def etm_master_messages_patch(self):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
         self.patch(self.msg, self.master_messages, "msg", 635266065)
         self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 1169581507)
 
-        self.bot.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
-        self.bot.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
+        self.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
+        self.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
+
+        self.dispatcher.handlers[0].sort(key=self.sort_handler)
 
         if self.dispatcher.handlers[0] and self.dispatcher.handlers[0][0]:
             self.handler = self.dispatcher.handlers[0][0]
@@ -858,7 +871,7 @@ class PatchMiddleware(Middleware):
         else:
             tg_chat = update.effective_chat.id
 
-        channel_id, chat_uid = utils.chat_id_str_to_id(msg_log.slave_origin_uid)
+        channel_id, chat_uid, _ = utils.chat_id_str_to_id(msg_log.slave_origin_uid)
         try:
             channel = coordinator.slaves[channel_id]
             chat = channel.get_chat(chat_uid)
@@ -906,7 +919,7 @@ class PatchMiddleware(Middleware):
         else:
             tg_chat = update.effective_chat.id
 
-        channel_id, chat_uid = utils.chat_id_str_to_id(msg_log.slave_origin_uid)
+        channel_id, chat_uid, _ = utils.chat_id_str_to_id(msg_log.slave_origin_uid)
         try:
             channel = coordinator.slaves[channel_id]
             chat = channel.get_chat(chat_uid)
@@ -1266,12 +1279,25 @@ class PatchMiddleware(Middleware):
                     elif appmsg_type == '1':  # Strange “app message” that looks like a text link
                         msg.raw['text'] = self.get_node_text(xml, './appmsg/title', "")
                         return self.wechat_text_msg(msg)
+                    ### patch modified 👇 ###
+                    elif appmsg_type == '51':  # 视频号
+                        title = self.get_node_text(xml, './appmsg/finderFeed/nickname', "") or \
+                                self.get_node_text(xml, './appmsg/finderFeed/desc', "") or \
+                                self.get_node_text(xml, './appmsg/title', "")
+
+                        title = '视频号：' + title
+                        des = self.get_node_text(xml, './appmsg/finderFeed/desc', "")
+                        thumb_url = self.get_node_text(xml, './appmsg/finderFeed/mediaList/media/thumbUrl', "")  # 视频预览
+                        url = self.get_node_text(xml, './appmsg/finderFeed/mediaList/media/url', "")  # 视频链接
+                        return self.wechat_raw_link_msg(msg, title, des, thumb_url, url)
+                        # return self.wechat_shared_link_msg(msg, source, title, des, url)
                     else:
                         # Unidentified message type
                         self.logger.error("[%s] Identified unsupported sharing message type. Raw message: %s",
                                           msg.id, msg.raw)
                         raise KeyError()
-                except (TypeError, KeyError, ValueError, ETree.ParseError):
+                except (TypeError, KeyError, ValueError, ETree.ParseError) as e:
+                    self.logger.log(99, "Raw e: %s", e)
                     return self.wechat_unsupported_msg(msg)
         ### patch modified 👇 ###
         if self.channel_ews.flag("first_link_only"):
@@ -1331,7 +1357,7 @@ class PatchMiddleware(Middleware):
 
         try:
             chat.mark_as_read()
-        except wxpy.ResponseError as e:
+        except Exception as e:
             self.logger.exception(
                 "[%s] Error occurred while marking chat as read. (%s)", msg.uid, e)
 
