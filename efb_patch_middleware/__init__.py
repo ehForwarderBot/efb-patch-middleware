@@ -8,6 +8,7 @@ import sched
 import logging
 import telegram
 import itertools
+import ffmpeg
 
 import binascii
 import functools
@@ -66,6 +67,8 @@ OldMsgID = Tuple[TelegramChatID, TelegramMessageID]
 schedule = sched.scheduler(time.time, time.sleep)
 
 DALAY_MARK_AS_READ = 10
+
+GIF_MAX_FILE_SIZE = 2 ** 20
 
 patch_result = []
 
@@ -1291,6 +1294,14 @@ class PatchMiddleware(Middleware):
                         url = self.get_node_text(xml, './appmsg/finderFeed/mediaList/media/url', "")  # 视频链接
                         return self.wechat_raw_link_msg(msg, title, des, thumb_url, url)
                         # return self.wechat_shared_link_msg(msg, source, title, des, url)
+                    elif appmsg_type == '50':  # 视频号名片
+                        title = self.get_node_text(xml, './appmsg/findernamecard/nickname', "") or \
+                                self.get_node_text(xml, './appmsg/title', "")
+
+                        title = '视频号名片：' + title
+                        des = self.get_node_text(xml, './appmsg/findernamecard/auth_job', "")
+                        url = self.get_node_text(xml, './appmsg/findernamecard/avatar', "")
+                        return self.wechat_shared_link_msg(msg, source, title, des, url)
                     else:
                         # Unidentified message type
                         self.logger.error("[%s] Identified unsupported sharing message type. Raw message: %s",
@@ -1476,6 +1487,18 @@ class PatchMiddleware(Middleware):
                         raise EFBMessageError(
                             self._("Image size is too large. (IS01)"))
                     file.seek(0)
+                    ### patch modified start 👇 ###
+                    if msg.type == MsgType.Animation and file.seek(0, 2) > GIF_MAX_FILE_SIZE:
+                        gif_file = NamedTemporaryFile(suffix='.gif')
+                        metadata = ffmpeg.probe(file.name)
+                        stream = ffmpeg.input(file.name)
+                        stream = stream.filter("scale", 350, -2).filter("fps", 10)
+                        stream.output(gif_file.name).overwrite_output().run()
+                        self.logger.log(99, "file size %sk", file.seek(0, 2) / 1024)
+                        file = gif_file
+                        self.logger.log(99, "new file size %sk", file.seek(0, 2) / 1024)
+                        file.seek(0)
+                    ### patch modified end 👆 ###
                     self.logger.debug(
                         "[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
                     filename = msg.filename or (msg.path and msg.path.name)
