@@ -23,7 +23,7 @@ from xml.etree import ElementTree as ETree
 from xml.etree.ElementTree import Element
 
 from typing import Tuple, Optional, List, overload, Callable, Sequence, Any, Dict, IO, Type, Union
-from telegram import ChatAction, Update, TelegramError, InputMediaPhoto, InputMediaDocument, InputMediaVideo, ReplyMarkup
+from telegram import ChatAction, Update, TelegramError, InputMediaPhoto, InputMediaDocument, InputMediaVideo, ReplyMarkup, Contact
 from telegram.ext import CallbackContext, Filters, MessageHandler, CommandHandler
 from telegram.error import BadRequest
 from telegram.utils.helpers import escape_markdown
@@ -332,7 +332,7 @@ class PatchMiddleware(Middleware):
     def etm_slave_messages_patch(self):
         self.patch(self.generate_message_template, self.slave_messages, "generate_message_template", 3121137375)
         # self.patch(self.slave_message_image, self.slave_messages, "slave_message_image", 1179016156)
-        self.patch(self.get_slave_msg_dest, self.slave_messages, "get_slave_msg_dest", 3457314213)
+        self.patch(self.get_slave_msg_dest, self.slave_messages, "get_slave_msg_dest", 2284390933)
 
         if self.STRIKETHROUGH_RECALL_MSG:
             self.patch(self.send_status, self.slave_messages, "send_status", 2710203104)
@@ -351,8 +351,8 @@ class PatchMiddleware(Middleware):
     def etm_master_messages_patch(self):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
-        self.patch(self.msg, self.master_messages, "msg", 635266065)
-        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 1169581507)
+        self.patch(self.msg, self.master_messages, "msg", 50829608)
+        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 877899915)
 
         self.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
         self.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
@@ -665,10 +665,10 @@ class PatchMiddleware(Middleware):
         self.logger.debug("[%s] Message is in chat %s", xid, msg.chat)
 
         # Generate chat text template & Decide type target
-        tg_dest = self.channel.config['admins'][0]
+        tg_dest = TelegramChatID(self.channel.config['admins'][0])
 
         if tg_chat:  # if this chat is linked
-            tg_dest = TelegramChatID(utils.chat_id_str_to_id(tg_chat)[1])
+            tg_dest = TelegramChatID(int(utils.chat_id_str_to_id(tg_chat)[1]))
         else:
             singly_linked = False
 
@@ -676,8 +676,8 @@ class PatchMiddleware(Middleware):
         self.logger.debug("[%s] Message is sent to Telegram chat %s, with header \"%s\".",
                           xid, tg_dest, msg_template)
 
-        if self.chat_dest_cache.get(tg_dest) != chat_uid:
-            self.chat_dest_cache.remove(tg_dest)
+        if self.chat_dest_cache.get(str(tg_dest)) != chat_uid:
+            self.chat_dest_cache.remove(str(tg_dest))
 
         return msg_template, tg_dest
 
@@ -952,6 +952,9 @@ class PatchMiddleware(Middleware):
         """
         Process, wrap and dispatch messages from user.
         """
+        assert isinstance(update, Update)
+        assert update.effective_message
+        assert update.effective_chat
 
         message: Message = update.effective_message
         mid = utils.message_id_to_str(update=update)
@@ -960,6 +963,7 @@ class PatchMiddleware(Middleware):
 
         destination = None
         edited = None
+        quote = False
 
         if update.edited_message or update.edited_channel_post:
             self.logger.debug('[%s] Message is edited: %s', mid, message.edit_date)
@@ -969,47 +973,52 @@ class PatchMiddleware(Middleware):
                 return
             destination = msg_log.slave_origin_uid
             edited = msg_log
+            quote = msg_log.build_etm_msg(self.chat_manager).target is not None
 
         if destination is None:
-            # if the chat is singly-linked
             destination = self.get_singly_linked_chat_id_str(update.effective_chat)
+            if destination:
+                # if the chat is singly-linked
+                quote = message.reply_to_message is not None
+                self.logger.debug("[%s] Chat %s is singly-linked to %s", mid, message.chat, destination)
 
         if destination is None:  # not singly linked
             quote = False
             self.logger.debug("[%s] Chat %s is not singly-linked", mid, update.effective_chat)
             reply_to = message.reply_to_message
-            cached_dest = self.chat_dest_cache.get(message.chat.id)
+            cached_dest = self.chat_dest_cache.get(str(message.chat.id))
             if reply_to:
                 self.logger.debug("[%s] Message is quote-replying to %s", mid, reply_to)
                 dest_msg = self.db.get_msg_log(
-                    master_msg_id=utils.message_id_to_str(reply_to.chat.id, reply_to.message_id)
+                    master_msg_id=utils.message_id_to_str(
+                        TelegramChatID(reply_to.chat.id),
+                        TelegramMessageID(reply_to.message_id)
+                )
                 )
                 if dest_msg:
                     destination = dest_msg.slave_origin_uid
-                    self.chat_dest_cache.set(message.chat.id, destination)
+                    self.chat_dest_cache.set(str(message.chat.id), destination)
                     self.logger.debug("[%s] Quoted message is found in database with destination: %s", mid, destination)
             elif cached_dest:
                 self.logger.debug("[%s] Cached destination found: %s", mid, cached_dest)
                 destination = cached_dest
-                self._send_cached_chat_warning(update, message.chat.id, cached_dest)
-        else:
-            quote = message.reply_to_message is not None
-            self.logger.debug("[%s] Chat %s is singly-linked to %s", mid, message.chat, destination)
+                self._send_cached_chat_warning(update, TelegramChatID(message.chat.id), cached_dest)
 
         self.logger.debug("[%s] Destination chat = %s", mid, destination)
 
         if destination is None:
             self.logger.debug("[%s] Destination is not found for this message", mid)
             candidates = (
-                 self.db.get_recent_slave_chats(message.chat.id, limit=5) or
-                 self.db.get_chat_assoc(master_uid=utils.chat_id_to_str(self.channel_id, message.chat.id))[:5]
+                 self.db.get_recent_slave_chats(TelegramChatID(message.chat.id), limit=5) or
+                 self.db.get_chat_assoc(master_uid=utils.chat_id_to_str(self.channel_id, ChatID(str(message.chat.id))))[:5]
             )
             if candidates:
                 self.logger.debug("[%s] Candidate suggestions are found for this message: %s", mid, candidates)
                 tg_err_msg = message.reply_text(self._("Error: No recipient specified.\n"
                                                        "Please reply to a previous message. (MS01)"), quote=True)
                 self.channel.chat_binding.register_suggestions(update, candidates,
-                                                               update.effective_chat.id, tg_err_msg.message_id)
+                                                               TelegramChatID(update.effective_chat.id),
+                                                               TelegramMessageID(tg_err_msg.message_id))
             else:
                 ### patch modified start 👇 ###
                 chat_relation = self.tgdb.get_wx_groups(master_id=message.chat.id)
@@ -1044,6 +1053,8 @@ class PatchMiddleware(Middleware):
             quote: If the message shall quote another one
             edited: old message log entry if the message can be edited.
         """
+        assert isinstance(update, Update)
+        assert update.effective_message
 
         # Message ID for logging
         message_id = utils.message_id_to_str(update=update)
@@ -1094,14 +1105,15 @@ class PatchMiddleware(Middleware):
                         .format(type_name=m.type.name,
                                 channel_name=coordinator.slaves[channel].channel_name))
 
-            # Parse message text and caption to markdown
-            msg_md_text = message.text and message.text_markdown
-            if msg_md_text and msg_md_text == escape_markdown(message.text):
+            # Convert message text and caption to markdown
+            # Keep original text if what *_markdown_2 did is just escaping the text.
+            msg_md_text = message.text and message.text_markdown_v2 or ""
+            if message.text and msg_md_text == escape_markdown(message.text, version=2):
                 msg_md_text = message.text
             msg_md_text = msg_md_text or ""
 
-            msg_md_caption = message.caption and message.caption_markdown
-            if msg_md_caption and msg_md_caption == escape_markdown(message.caption):
+            msg_md_caption = message.caption and message.caption_markdown_v2 or ""
+            if message.caption and msg_md_caption == escape_markdown(message.caption, version=2):
                 msg_md_caption = message.caption
             msg_md_caption = msg_md_caption or ""
 
@@ -1120,7 +1132,7 @@ class PatchMiddleware(Middleware):
                     if not self.channel.flag('prevent_message_removal'):
                         try:
                             message.delete()
-                        except telegram.TelegramError:
+                        except TelegramError:
                             message.reply_text(self._("Message is removed in remote chat."))
                     else:
                         message.reply_text(self._("Message is removed in remote chat."))
@@ -1165,61 +1177,73 @@ class PatchMiddleware(Middleware):
             if mtype is TGMsgType.Text:
                 m.text = msg_md_text
             elif mtype is TGMsgType.Photo:
+                assert message.photo
                 m.text = msg_md_caption
                 m.mime = "image/jpeg"
                 self._check_file_download(message.photo[-1])
             elif mtype in (TGMsgType.Sticker, TGMsgType.AnimatedSticker):
+                assert message.sticker
                 # Convert WebP to the more common PNG
                 m.text = ""
                 self._check_file_download(message.sticker)
             elif mtype is TGMsgType.Animation:
+                assert message.animation
                 m.text = msg_md_caption
                 self.logger.debug("[%s] Telegram message is a \"Telegram GIF\".", message_id)
-                m.filename = getattr(message.document, "file_name", None) or None
+                m.filename = getattr(message.animation, "file_name", None) or None
                 if m.filename and not m.filename.lower().endswith(".gif"):
                     m.filename += ".gif"
-                m.mime = message.document.mime_type or m.mime
+                m.mime = message.animation.mime_type or m.mime
             elif mtype is TGMsgType.Document:
+                assert message.document
                 m.text = msg_md_caption
                 self.logger.debug("[%s] Telegram message type is document.", message_id)
                 m.filename = getattr(message.document, "file_name", None) or None
                 m.mime = message.document.mime_type
                 self._check_file_download(message.document)
             elif mtype is TGMsgType.Video:
+                assert message.video
                 m.text = msg_md_caption
                 m.mime = message.video.mime_type
                 self._check_file_download(message.video)
             elif mtype is TGMsgType.VideoNote:
+                assert message.video_note
                 m.text = msg_md_caption
-                self._check_file_download(message.video)
+                self._check_file_download(message.video_note)
             elif mtype is TGMsgType.Audio:
+                assert message.audio
                 m.text = "%s - %s\n%s" % (
                     message.audio.title, message.audio.performer, msg_md_caption)
                 m.mime = message.audio.mime_type
                 self._check_file_download(message.audio)
             elif mtype is TGMsgType.Voice:
+                assert message.voice
                 m.text = msg_md_caption
                 m.mime = message.voice.mime_type
                 self._check_file_download(message.voice)
             elif mtype is TGMsgType.Location:
                 # TRANSLATORS: Message body text for location messages.
+                assert message.location
                 m.text = self._("Location")
                 m.attributes = LocationAttribute(
                     message.location.latitude,
                     message.location.longitude
                 )
             elif mtype is TGMsgType.Venue:
-                m.text = f"📍 {message.location.title}\n{message.location.adderss}"
+                assert message.venue
+                m.text = f"📍 {message.venue.title}\n{message.venue.address}"
                 m.attributes = LocationAttribute(
                     message.venue.location.latitude,
                     message.venue.location.longitude
                 )
             elif mtype is TGMsgType.Contact:
-                contact: telegram.Contact = message.contact
+                assert message.contact
+                contact: Contact = message.contact
                 m.text = self._("Shared a contact: {first_name} {last_name}\n{phone_number}").format(
                     first_name=contact.first_name, last_name=contact.last_name, phone_number=contact.phone_number
                 )
             elif mtype is TGMsgType.Dice:
+                assert message.dice
                 m.text = f"{message.dice.emoji} = {message.dice.value}"
             else:
                 raise EFBMessageTypeNotSupported(self._("Message type {0} is not supported.").format(mtype.name))
