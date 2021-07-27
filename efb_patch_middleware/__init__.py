@@ -1318,6 +1318,14 @@ class PatchMiddleware(Middleware):
                         url = self.get_node_text(xml, './appmsg/finderFeed/mediaList/media/url', "")  # 视频链接
                         return self.wechat_raw_link_msg(msg, title, des, thumb_url, url)
                         # return self.wechat_shared_link_msg(msg, source, title, des, url)
+                    elif appmsg_type == '4':  # 应用分享（小红书）
+                        title = ": ".join((self.get_node_text(xml, './appinfo/appname', ""),
+                            self.get_node_text(xml, './appmsg/title', "") or self.get_node_text(xml, './appmsg/des', "")))
+
+                        des = self.get_node_text(xml, './appmsg/des', "")
+                        thumb_url = self.get_node_text(xml, './appmsg/lowurl', "")  # 视频预览
+                        url = self.get_node_text(xml, './appmsg/url', "")  # 视频链接
+                        return self.wechat_raw_link_msg(msg, title, des, thumb_url, url)
                     elif appmsg_type == '50':  # 视频号名片
                         title = self.get_node_text(xml, './appmsg/findernamecard/nickname', "") or \
                                 self.get_node_text(xml, './appmsg/title', "")
@@ -1513,16 +1521,19 @@ class PatchMiddleware(Middleware):
                     file.seek(0)
                     ### patch modified start 👇 ###
                     if msg.type == MsgType.Animation:
-                        metadata = ffmpeg.probe(file.name)
-                        # self.logger.log(99, "file info: %s", metadata)
-                        if int(metadata['format']['bit_rate']) > 500000:
-                            gif_file = NamedTemporaryFile(suffix='.gif')
-                            stream = ffmpeg.input(file.name)
-                            stream = stream.filter("scale", 320, -2).filter("fps", 8)
-                            stream.output(gif_file.name).overwrite_output().run()
-                            # self.logger.log(99, "new file info %s", ffmpeg.probe(gif_file.name))
-                            file = gif_file
-                            file.seek(0)
+                        try:
+                            metadata = ffmpeg.probe(file.name)
+                            # self.logger.log(99, "file info: %s", metadata)
+                            if int(metadata['format']['bit_rate']) > 500000:
+                                gif_file = NamedTemporaryFile(suffix='.gif')
+                                stream = ffmpeg.input(file.name)
+                                stream = stream.filter("scale", 320, -2).filter("fps", 8)
+                                stream.output(gif_file.name).overwrite_output().run()
+                                # self.logger.log(99, "new file info %s", ffmpeg.probe(gif_file.name))
+                                file = gif_file
+                                file.seek(0)
+                        except:
+                            self.logger.log(99, "file info: %s", metadata)
                     ### patch modified end 👆 ###
                     self.logger.debug(
                         "[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
