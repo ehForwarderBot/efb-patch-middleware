@@ -1521,8 +1521,8 @@ class PatchMiddleware(Middleware):
                     file.seek(0)
                     ### patch modified start 👇 ###
                     if msg.type == MsgType.Animation:
+                        metadata = ffmpeg.probe(file.name)
                         try:
-                            metadata = ffmpeg.probe(file.name)
                             # self.logger.log(99, "file info: %s", metadata)
                             if int(metadata['format']['bit_rate']) > 500000:
                                 gif_file = NamedTemporaryFile(suffix='.gif')
