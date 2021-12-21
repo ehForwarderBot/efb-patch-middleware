@@ -1532,8 +1532,8 @@ class PatchMiddleware(Middleware):
                                 # self.logger.log(99, "new file info %s", ffmpeg.probe(gif_file.name))
                                 file = gif_file
                                 file.seek(0)
-                        except:
-                            self.logger.log(99, "file info: %s", metadata)
+                        except Exception as e:
+                            self.logger.exception("Exception occurred while trying to compress img: %s", e)
                     ### patch modified end 👆 ###
                     self.logger.debug(
                         "[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
