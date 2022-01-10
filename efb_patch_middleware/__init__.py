@@ -1520,20 +1520,20 @@ class PatchMiddleware(Middleware):
                             self._("Image size is too large. (IS01)"))
                     file.seek(0)
                     ### patch modified start 👇 ###
-                    if msg.type == MsgType.Animation:
-                        try:
-                            metadata = ffmpeg.probe(file.name)
-                            # self.logger.log(99, "file info: %s", metadata)
-                            if int(metadata['format']['bit_rate']) > 500000:
-                                gif_file = NamedTemporaryFile(suffix='.gif')
-                                stream = ffmpeg.input(file.name)
-                                stream = stream.filter("scale", 320, -2).filter("fps", 8)
-                                stream.output(gif_file.name).overwrite_output().run()
-                                # self.logger.log(99, "new file info %s", ffmpeg.probe(gif_file.name))
-                                file = gif_file
-                                file.seek(0)
-                        except Exception as e:
-                            self.logger.exception("Exception occurred while trying to compress img: %s", e)
+                    # if msg.type == MsgType.Animation:
+                    #     try:
+                    #         metadata = ffmpeg.probe(file.name)
+                    #         # self.logger.log(99, "file info: %s", metadata)
+                    #         if int(metadata['format']['bit_rate']) > 500000:
+                    #             gif_file = NamedTemporaryFile(suffix='.gif')
+                    #             stream = ffmpeg.input(file.name)
+                    #             stream = stream.filter("scale", 320, -2).filter("fps", 8)
+                    #             stream.output(gif_file.name).overwrite_output().run()
+                    #             # self.logger.log(99, "new file info %s", ffmpeg.probe(gif_file.name))
+                    #             file = gif_file
+                    #             file.seek(0)
+                    #     except Exception as e:
+                    #         self.logger.exception("Exception occurred while trying to compress img: %s", e)
                     ### patch modified end 👆 ###
                     self.logger.debug(
                         "[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
