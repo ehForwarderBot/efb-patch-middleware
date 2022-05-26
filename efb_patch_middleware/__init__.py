@@ -246,6 +246,7 @@ class PatchMiddleware(Middleware):
             self.chat_dest_cache = self.slave_messages.chat_dest_cache
             self.check_file_size = self.slave_messages.check_file_size
             self.html_substitutions = self.slave_messages.html_substitutions
+            self.process_file_obj = self.slave_messages.process_file_obj
 
             self.get_singly_linked_chat_id_str = self.master_messages.get_singly_linked_chat_id_str
             self._send_cached_chat_warning = self.master_messages._send_cached_chat_warning
@@ -271,6 +272,7 @@ class PatchMiddleware(Middleware):
             self._bot_send_video = self.channel_ews._bot_send_video
             self.MAX_FILE_SIZE = self.channel_ews.MAX_FILE_SIZE
             self.MEDIA_MSG_TYPES = self.channel_ews.MEDIA_MSG_TYPES
+            self.QUOTE_DIVIDER = self.channel_ews.QUOTE_DIVIDER
 
             self.wechat_unsupported_msg = self.channel_ews.slave_message.wechat_unsupported_msg
             self.wechat_shared_image_msg = self.channel_ews.slave_message.wechat_shared_image_msg
@@ -352,7 +354,7 @@ class PatchMiddleware(Middleware):
         self.master_messages.DELETE_FLAG = self.channel.config.get('delete_flag', self.master_messages.DELETE_FLAG)
         self.DELETE_FLAG = self.master_messages.DELETE_FLAG
         self.patch(self.msg, self.master_messages, "msg", 1596462929)
-        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 2987607773)
+        self.patch(self.process_telegram_message, self.master_messages, "process_telegram_message", 3709018984)
 
         self.dispatcher.add_handler(CommandHandler('relate_group', self.relate_group))
         self.dispatcher.add_handler(CommandHandler('release_group', self.release_group))
@@ -406,12 +408,14 @@ class PatchMiddleware(Middleware):
             # self.logger.log(99, "set auto_mark_as_read to [%s]", self.channel_ews.bot.auto_mark_as_read)
 
     def ews_init_patch(self):
-        self.channel_ews.send_message = self.send_message
+        # self.channel_ews.send_message = self.send_message
+        self.patch(self.send_message, self.channel_ews, "send_message", 4102327179)
 
     def ews_slave_message_patch(self):
         config = self.registered.get_config_by_func(self.channel_ews.slave_message.wechat_sharing_msg)
         config.func = self.wechat_sharing_msg
-        self.channel_ews.slave_message.wechat_sharing_msg = self.wechat_sharing_msg
+        # self.channel_ews.slave_message.wechat_sharing_msg = self.wechat_sharing_msg
+        self.patch(self.wechat_sharing_msg, self.channel_ews.slave_message, "wechat_sharing_msg", 1603906507)
 
     def sent_by_master(self, message: Message) -> bool:
         author = message.author
@@ -501,7 +505,6 @@ class PatchMiddleware(Middleware):
         if msg.path:
             self.logger.debug("[%s] Size of %s is %s.", msg.uid, msg.path, os.stat(msg.path).st_size)
 
-        ### patch modified start 👇 ###
         if msg.text:
             text = self.html_substitutions(msg)
         elif msg_template:
@@ -514,7 +517,6 @@ class PatchMiddleware(Middleware):
                 text = ""
         else:
             text = ""
-        ### patch modified end 👆 ###
         try:
             # Avoid Telegram compression of pictures by sending high definition image messages as files
             # Code adopted from wolfsilver's fork:
@@ -565,10 +567,13 @@ class PatchMiddleware(Middleware):
             if old_msg_id:
                 try:
                     if edit_media:
+                        assert msg.path
+                        media: InputMedia
+                        file = self.process_file_obj(msg.file, msg.path)
                         if send_as_file:
-                            media = InputMediaDocument(msg.file)
+                            media = InputMediaDocument(file)
                         else:
-                            media = InputMediaPhoto(msg.file)
+                            media = InputMediaPhoto(file)
                         self.bot.edit_message_media(chat_id=old_msg_id[0], message_id=old_msg_id[1], media=media)
                     return self.bot.edit_message_caption(chat_id=old_msg_id[0], message_id=old_msg_id[1],
                                                          reply_markup=reply_markup,
@@ -580,14 +585,18 @@ class PatchMiddleware(Middleware):
                     msg.file.seek(0)
 
             if send_as_file:
-                return self.bot.send_document(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
+                assert msg.path
+                file = self.process_file_obj(msg.file, msg.path)
+                return self.bot.send_document(tg_dest, file, prefix=msg_template, suffix=reactions,
                                               caption=text, parse_mode="HTML", filename=msg.filename,
                                               reply_to_message_id=target_msg_id,
                                               reply_markup=reply_markup,
                                               disable_notification=silent)
             else:
                 try:
-                    return self.bot.send_photo(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
+                    assert msg.path
+                    file = self.process_file_obj(msg.file, msg.path)
+                    return self.bot.send_photo(tg_dest, file, prefix=msg_template, suffix=reactions,
                                                caption=text, parse_mode="HTML",
                                                reply_to_message_id=target_msg_id,
                                                reply_markup=reply_markup,
@@ -595,7 +604,9 @@ class PatchMiddleware(Middleware):
                 except telegram.error.BadRequest as e:
                     self.logger.error('[%s] Failed to send it as image, sending as document. Reason: %s',
                                       msg.uid, e)
-                    return self.bot.send_document(tg_dest, msg.file, prefix=msg_template, suffix=reactions,
+                    assert msg.path
+                    file = self.process_file_obj(msg.file, msg.path)
+                    return self.bot.send_document(tg_dest, file, prefix=msg_template, suffix=reactions,
                                                   caption=text, parse_mode="HTML", filename=msg.filename,
                                                   reply_to_message_id=target_msg_id,
                                                   reply_markup=reply_markup,
@@ -760,6 +771,10 @@ class PatchMiddleware(Middleware):
 
         Triggered by ``/update_info`` command.
         """
+        assert isinstance(update, Update)
+        assert update.effective_message
+        assert update.effective_chat
+
         if update.effective_chat.type == telegram.Chat.PRIVATE:
             return self.bot.reply_error(update, self._('Send /update_info to a group where this bot is a group admin '
                                                        'to update group title, description and profile picture.'))
@@ -769,7 +784,7 @@ class PatchMiddleware(Middleware):
         else:
             tg_chat = update.effective_chat.id
         chats = self.db.get_chat_assoc(master_uid=utils.chat_id_to_str(channel=self.channel,
-                                                                       chat_uid=tg_chat))
+                                                                       chat_uid=ChatID(str(tg_chat))))
         if len(chats) != 1:
             return self.bot.reply_error(update, self.ngettext('This only works in a group linked with one chat. '
                                                               'Currently {0} chat linked to this group.',
@@ -831,7 +846,7 @@ class PatchMiddleware(Middleware):
 
             self.bot.set_chat_photo(tg_chat, pic_resized or picture)
             ### patch modified 👇 ###
-            # update.message.reply_text(self._('Chat details updated.'))
+            # update.effective_message.reply_text(self._('Chat details updated.'))
         except EFBChatNotFound:
             self.logger.exception("Chat linked (%s) is not found in the slave channel "
                                   "(%s).", channel_id, chat_uid)
@@ -993,7 +1008,7 @@ class PatchMiddleware(Middleware):
                     master_msg_id=utils.message_id_to_str(
                         TelegramChatID(reply_to.chat.id),
                         TelegramMessageID(reply_to.message_id)
-                )
+                    )
                 )
                 if dest_msg:
                     destination = dest_msg.slave_origin_uid
@@ -1079,6 +1094,7 @@ class PatchMiddleware(Middleware):
                 self.logger.debug("[%s] EFB message type: %s", message_id, mtype)
             else:
                 self.logger.info("[%s] Message type %s is not supported by ETM", message_id, mtype)
+                log_message = False
                 raise EFBMessageTypeNotSupported(
                     self._("{type_name} messages are not supported by EFB Telegram Master channel.")
                         .format(type_name=mtype.name))
@@ -1173,7 +1189,7 @@ class PatchMiddleware(Middleware):
                 return
             ### patch modified end 👆 ###
 
-            # Enclose message as an Message object by message type.
+            # Enclose message as a Message object by message type.
             if mtype is TGMsgType.Text:
                 m.text = msg_md_text
             elif mtype is TGMsgType.Photo:
@@ -1190,10 +1206,20 @@ class PatchMiddleware(Middleware):
                 assert message.animation
                 m.text = msg_md_caption
                 self.logger.debug("[%s] Telegram message is a \"Telegram GIF\".", message_id)
-                m.filename = getattr(message.animation, "file_name", None) or None
-                if m.filename and not m.filename.lower().endswith(".gif"):
-                    m.filename += ".gif"
+                m_filename = getattr(message.animation, "file_name", None) or None
+                if m_filename and not m_filename.lower().endswith(".gif"):
+                    m_filename += ".gif"
+                m.filename = m_filename
                 m.mime = message.animation.mime_type or m.mime
+            elif mtype is TGMsgType.VideoSticker:
+                assert message.sticker and message.sticker.is_video
+                m.text = msg_md_caption
+                self.logger.debug("[%s] Telegram message is a WebM sticker.", message_id)
+                m_filename = getattr(message.sticker, "file_name", None) or "sticker"
+                if m_filename and not m_filename.lower().endswith(".gif"):
+                    m_filename += ".gif"
+                m.filename = m_filename
+                m.mime = "image/gif"
             elif mtype is TGMsgType.Document:
                 assert message.document
                 m.text = msg_md_caption
@@ -1289,7 +1315,7 @@ class PatchMiddleware(Middleware):
                     source = self.get_node_text(xml, './appinfo/appname', "")
                     if appmsg_type == '2':  # Image
                         return self.wechat_shared_image_msg(msg, source)
-                    elif appmsg_type in ('3', '5'):
+                    elif appmsg_type in ('3', '4', '5'):
                         title = self.get_node_text(xml, './appmsg/title', "")
                         des = self.get_node_text(xml, './appmsg/des', "")
                         url = self.get_node_text(xml, './appmsg/url', "")
@@ -1400,7 +1426,7 @@ class PatchMiddleware(Middleware):
 
         try:
             chat.mark_as_read()
-        except Exception as e:
+        except wxpy.ResponseError as e:
             self.logger.exception(
                 "[%s] Error occurred while marking chat as read. (%s)", msg.uid, e)
 
@@ -1435,22 +1461,23 @@ class PatchMiddleware(Middleware):
         if send_text_only or msg.type in [MsgType.Text, MsgType.Link]:
             if isinstance(msg.target, Message):
                 max_length = self.flag("max_quote_length")
-                qt_txt = msg.target.text or msg.target.type.name
-                if max_length > 0:
-                    if len(qt_txt) >= max_length:
-                        tgt_text = qt_txt[:max_length]
-                        tgt_text += "…"
-                    else:
+                if max_length != 0:
+                    qt_txt = msg.target.text or msg.target.type.name
+                    if self.QUOTE_DIVIDER in qt_txt:
+                        qt_txt = qt_txt.split(self.QUOTE_DIVIDER)[-1]
+                    if max_length > 0:
+                        if len(qt_txt) >= max_length:
+                            tgt_text = qt_txt[:max_length]
+                            tgt_text += "…"
+                        else:
+                            tgt_text = qt_txt
+                    else:  # tgt_text < 0
                         tgt_text = qt_txt
-                elif max_length < 0:
-                    tgt_text = qt_txt
-                else:
-                    tgt_text = ""
-                if isinstance(chat, wxpy.Group) and not isinstance(msg.target.author, SelfChatMember):
-                    tgt_alias = "@%s\u2005：" % msg.target.author.display_name
-                else:
-                    tgt_alias = ""
-                msg.text = f"「{tgt_alias}{tgt_text}」\n- - - - - - - - - - - - - - -\n{msg.text}"
+                    if isinstance(chat, wxpy.Group) and not isinstance(msg.target.author, SelfChatMember):
+                        tgt_alias = "@%s\u2005：" % msg.target.author.display_name
+                    else:
+                        tgt_alias = ""
+                    msg.text = f"「{tgt_alias}{tgt_text}」\n{self.QUOTE_DIVIDER}\n{msg.text}"
             r.append(self._bot_send_msg(chat, msg.text))
             self.logger.debug(
                 '[%s] Sent as a text message. %s', msg.uid, msg.text)
@@ -1519,27 +1546,35 @@ class PatchMiddleware(Middleware):
                         raise EFBMessageError(
                             self._("Image size is too large. (IS01)"))
                     file.seek(0)
-                    ### patch modified start 👇 ###
-                    # if msg.type == MsgType.Animation:
-                    #     try:
-                    #         metadata = ffmpeg.probe(file.name)
-                    #         # self.logger.log(99, "file info: %s", metadata)
-                    #         if int(metadata['format']['bit_rate']) > 500000:
-                    #             gif_file = NamedTemporaryFile(suffix='.gif')
-                    #             stream = ffmpeg.input(file.name)
-                    #             stream = stream.filter("scale", 320, -2).filter("fps", 8)
-                    #             stream.output(gif_file.name).overwrite_output().run()
-                    #             # self.logger.log(99, "new file info %s", ffmpeg.probe(gif_file.name))
-                    #             file = gif_file
-                    #             file.seek(0)
-                    #     except Exception as e:
-                    #         self.logger.exception("Exception occurred while trying to compress img: %s", e)
-                    ### patch modified end 👆 ###
                     self.logger.debug(
                         "[%s] Sending %s (image) to WeChat.", msg.uid, msg.path)
                     filename = msg.filename or (msg.path and msg.path.name)
                     assert filename
-                    r.append(self._bot_send_image(chat, filename, file))
+                    ### patch modified start 👇 ###
+                    try:
+                        r.append(self._bot_send_image(chat, filename, file))
+                    except Exception as e:
+                        if msg.type == MsgType.Animation:
+                            try:
+                                metadata = ffmpeg.probe(file.name)
+                                # self.logger.log(99, "file info: %s", metadata)
+                                if int(metadata['format']['bit_rate']) > 500000 and int(metadata['streams'][0]['width']) > 300:
+                                    gif_file = NamedTemporaryFile(suffix='.gif')
+                                    stream = ffmpeg.input(file.name)
+                                    width = 220 if int(metadata['format']['bit_rate']) > 4000000 else 320
+                                    stream = stream.filter("scale", width, -2).filter("fps", 15)
+                                    stream.output(gif_file.name).overwrite_output().run()
+                                    self.logger.log(99, "new file info %s", ffmpeg.probe(gif_file.name))
+                                    file = gif_file
+                                    file.seek(0)
+                                    r.append(self._bot_send_image(chat, filename, file))
+                            except Exception as e:
+                                self.logger.exception("Exception occurred while trying to compress img: %s", e)
+                                raise e
+                        else:
+                            self.logger.exception("Exception occurred while trying to send img: %s", e)
+                            raise e
+                    ### patch modified end 👆 ###
                 finally:
                     if not file.closed:
                         file.close()
